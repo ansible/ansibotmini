@@ -9,9 +9,11 @@ import collections
 import concurrent.futures
 import configparser
 import datetime
+import itertools
 import json
 import logging
 import os.path
+import re
 import shelve
 import string
 import sys
@@ -583,6 +585,36 @@ def triage(objects: dict[str, GH_OBJ]) -> None:
         comments = []
         close = False
         logging.info(f"Triaging {obj.__class__.__name__} {obj.title} (#{obj.number})")
+
+        # commands
+        valid_commands = (
+            "bot_skip",
+            "bot_broken",
+            "needs_info",
+            "waiting_on_contributor",
+        )
+        # TODO '/' prefix?
+        # TODO negate commands
+        pattern = re.compile(f"^{'|'.join(valid_commands)}$")
+        commands_found = []
+        # TODO is concatenation of all strings first faster?
+        for comment_able in itertools.chain(
+            (obj.body,), (e["body"] for e in obj.events if e["name"] == "IssueComment")
+        ):
+            commands_found.extend(pattern.findall(comment_able))
+
+        # bot_skip/bot_broken
+        for command in ("bot_skip", "bot_broken"):
+            if command in commands_found:
+                logging.info(
+                    f"Skipping {obj.__class__.__name__} {obj.title} (#{obj.number}) due to {command}"
+                )
+                return
+
+        # label commands
+        for command in ("needs_info", "waiting_on_contributor"):
+            if command in commands_found:
+                to_label.append(command)
 
         # needs_triage
         if not any(
