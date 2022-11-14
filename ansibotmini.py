@@ -13,6 +13,7 @@ import json
 import logging
 import os.path
 import shelve
+import string
 import sys
 import time
 import typing as t
@@ -20,7 +21,9 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
-WAITING_ON_CONTRIBUTOR_DAYS = 365
+NEEDS_INFO_WARN_DAYS = 14
+NEEDS_INFO_CLOSE_DAYS = 28
+WAITING_ON_CONTRIBUTOR_CLOSE_DAYS = 365
 SLEEP_SECONDS = 300
 CONFIG_FILENAME = os.path.expanduser("~/.ansibotmini.cfg")
 CACHE_FILENAME = os.path.expanduser("~/.ansibotmini_cache")
@@ -89,6 +92,9 @@ query($number: Int!)
   repository(owner: "ansible", name: "ansible") {
     %s(number: $number) {
       id
+      author {
+        login
+      }
       number
       title
       body
@@ -198,6 +204,7 @@ class Response:
 @dataclass
 class Issue:
     id: str
+    author: str
     number: int
     title: str
     body: str
@@ -248,7 +255,7 @@ def http_request(
 def send_query(data: str) -> Response:
     return http_request(
         GITHUB_GRAPHQL_URL,
-        method="post",
+        method="POST",
         headers=HEADERS,
         data=data,
     )
@@ -411,7 +418,7 @@ def close_pr(obj_id: str) -> None:
     )
 
 
-def close_obj(obj: GH_OBJ) -> None:
+def close_object(obj: GH_OBJ) -> None:
     logging.info(f"{obj.__class__.__name__} #{obj.number}: closing")
     if isinstance(obj, Issue):
         close_issue(obj.id)
@@ -510,6 +517,7 @@ def fetch_object(
 
     kwargs = dict(
         id=o["id"],
+        author=o["author"]["login"],
         number=o["number"],
         title=o["title"],
         body=o["body"],
@@ -591,13 +599,39 @@ def triage(objects: dict[str, GH_OBJ]) -> None:
                 datetime.datetime.now(datetime.timezone.utc)
                 - last_labeled(obj, "waiting_on_contributor")
             ).days
-            > WAITING_ON_CONTRIBUTOR_DAYS
+            > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
         ):
             close = True
             to_label.append("bot_closed")
             to_unlabel.append("waiting_on_contributor")
             with open("templates/waiting_on_contributor.tmpl") as f:
                 comments.append(f.read())
+
+        # needs_info
+        if "needs_info" in obj.labels:
+            labeled_datetime = last_labeled(obj, "needs_info")
+            commented_datetime = last_commented_by(obj, obj.author)
+            if commented_datetime is None or labeled_datetime > commented_datetime:
+                days_since = (
+                    datetime.datetime.now(datetime.timezone.utc) - labeled_datetime
+                ).days
+                if days_since > NEEDS_INFO_CLOSE_DAYS:
+                    close = True
+                    with open("templates/needs_info_close.tmpl") as f:
+                        comments.append(
+                            string.Template(f.read()).substitute(
+                                author=obj.author, object_type=obj.__class__.__name__
+                            )
+                        )
+                elif days_since > NEEDS_INFO_WARN_DAYS:
+                    with open("templates/needs_info_warn.tmpl") as f:
+                        comments.append(
+                            string.Template(f.read()).substitute(
+                                author=obj.author, object_type=obj.__class__.__name__
+                            )
+                        )
+            else:
+                to_unlabel.append("needs_info")
 
         # PRs
         if isinstance(obj, PR):
@@ -622,7 +656,7 @@ def triage(objects: dict[str, GH_OBJ]) -> None:
             add_comment(obj, comment)
 
         if close:
-            close_obj(obj)
+            close_object(obj)
 
         logging.info(
             f"Done triaging {obj.__class__.__name__} {obj.title} (#{obj.number})"
@@ -631,11 +665,22 @@ def triage(objects: dict[str, GH_OBJ]) -> None:
 
 def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
     return max(
-        [
+        (
             e["created_at"]
             for e in obj.events
             if e["name"] == "LabeledEvent" and e["label"] == name
-        ]
+        )
+    )
+
+
+def last_commented_by(obj: GH_OBJ, name: str) -> datetime.datetime:
+    return max(
+        (
+            e["created_at"]
+            for e in obj.events
+            if e["name"] == "IssueComment" and e["author"] == name
+        ),
+        default=None,
     )
 
 
