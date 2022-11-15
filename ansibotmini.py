@@ -188,6 +188,11 @@ QUERY_SINGLE_PR = QUERY_SINGLE_TMPL % (
 baseRef {
   name
 }
+files(first: 50) {
+  nodes {
+    path
+  }
+}
 """,
 )
 
@@ -218,6 +223,7 @@ class Issue:
 @dataclass
 class PR(Issue):
     branch: str
+    files: list[str]
 
 
 GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
@@ -311,7 +317,7 @@ def add_labels(obj: GH_OBJ, labels: list[str]) -> None:
                 "query": query,
                 "variables": {
                     "input": {
-                        "labelIds": label_id_to_name_map.keys(),
+                        "labelIds": list(label_id_to_name_map.keys()),
                         "labelableId": obj.id,
                     },
                 },
@@ -343,7 +349,7 @@ def remove_labels(obj: GH_OBJ, labels: list[str]) -> None:
                 "query": query,
                 "variables": {
                     "input": {
-                        "labelIds": label_id_to_name_map.keys(),
+                        "labelIds": list(label_id_to_name_map.keys()),
                         "labelableId": obj.id,
                     },
                 },
@@ -519,7 +525,7 @@ def fetch_object(
 
     kwargs = dict(
         id=o["id"],
-        author=o["author"]["login"],
+        author=o["author"]["login"] if o["author"] else "ghost",
         number=o["number"],
         title=o["title"],
         body=o["body"],
@@ -529,6 +535,7 @@ def fetch_object(
     )
     if object_name == "pullRequest":
         kwargs["branch"] = o["baseRef"]["name"]
+        kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
 
     return obj(**kwargs)
 
@@ -578,6 +585,19 @@ def fetch_objects() -> dict[str, GH_OBJ]:
             return data
 
 
+component_re = re.compile(
+    r"#{3,5}\scomponent\sname(.+?)(?=#{3,5})", flags=re.IGNORECASE | re.DOTALL
+)
+valid_commands = (
+    "bot_skip",
+    "bot_broken",
+    "needs_info",
+    "waiting_on_contributor",
+)
+# TODO '/' prefix?
+commands_re = re.compile(f"^{'|'.join(valid_commands)}$")
+
+
 def triage(objects: dict[str, GH_OBJ]) -> None:
     for obj in objects.values():
         to_label = []
@@ -587,29 +607,25 @@ def triage(objects: dict[str, GH_OBJ]) -> None:
         logging.info(f"Triaging {obj.__class__.__name__} {obj.title} (#{obj.number})")
 
         # commands
-        valid_commands = (
-            "bot_skip",
-            "bot_broken",
-            "needs_info",
-            "waiting_on_contributor",
-        )
-        # TODO '/' prefix?
         # TODO negate commands
-        pattern = re.compile(f"^{'|'.join(valid_commands)}$")
         commands_found = []
         # TODO is concatenation of all strings first faster?
         for comment_able in itertools.chain(
             (obj.body,), (e["body"] for e in obj.events if e["name"] == "IssueComment")
         ):
-            commands_found.extend(pattern.findall(comment_able))
+            commands_found.extend(commands_re.findall(comment_able))
 
         # bot_skip/bot_broken
+        skip_this = False
         for command in ("bot_skip", "bot_broken"):
             if command in commands_found:
                 logging.info(
                     f"Skipping {obj.__class__.__name__} {obj.title} (#{obj.number}) due to {command}"
                 )
-                return
+                skip_this = True
+                break
+        if skip_this:
+            continue
 
         # label commands
         for command in ("needs_info", "waiting_on_contributor"):
@@ -664,6 +680,38 @@ def triage(objects: dict[str, GH_OBJ]) -> None:
                         )
             else:
                 to_unlabel.append("needs_info")
+
+        def process_component(data):
+            rv = []
+            for line in data:
+                for c in line.split(","):
+                    if "<!--" in c or "-->" in c:
+                        continue
+                    if c := (
+                        c.strip("\t\n\r ")
+                        .lower()
+                        .removeprefix("the ")
+                        .removeprefix("module ")
+                        .removesuffix(" module")
+                    ):
+                        rv.append(c)
+
+            return rv
+
+        # components
+        # TODO read !component command
+        components = []
+        if isinstance(obj, PR):
+            components = obj.files
+        elif isinstance(obj, Issue):
+            if match := component_re.search(obj.body):
+                components = process_component(match.group(1).splitlines())
+
+        logging.info(
+            f"{obj.__class__.__name__} #{obj.number}: indentified components: {', '.join(components)}"
+        )
+
+        # TODO store components on the object
 
         # PRs
         if isinstance(obj, PR):
