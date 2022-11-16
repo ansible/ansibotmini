@@ -106,7 +106,7 @@ query($number: Int!)
           name
         }
       }
-      timelineItems(first: 100, itemTypes: [ISSUE_COMMENT, LABELED_EVENT, UNLABELED_EVENT, CROSS_REFERENCED_EVENT]) {
+      timelineItems(first: 200, itemTypes: [ISSUE_COMMENT, LABELED_EVENT, UNLABELED_EVENT, CROSS_REFERENCED_EVENT]) {
         pageInfo {
             endCursor
             hasNextPage
@@ -218,6 +218,7 @@ class Issue:
     events: list[dict]
     labels: dict[str, str]
     updated_at: datetime.datetime
+    components: list[str]
 
 
 @dataclass
@@ -532,6 +533,7 @@ def fetch_object(
         events=process_events(o),
         labels={node["name"]: node["id"] for node in o["labels"].get("nodes", [])},
         updated_at=updated_at,
+        components=[],
     )
     if object_name == "pullRequest":
         kwargs["branch"] = o["baseRef"]["name"]
@@ -598,7 +600,8 @@ valid_commands = (
     "waiting_on_contributor",
 )
 # TODO '/' prefix?
-commands_re = re.compile(f"^{'|'.join(valid_commands)}$")
+commands_re = re.compile(f"^{'|'.join(valid_commands)}$", flags=re.MULTILINE)
+component_command_re = re.compile(r"^[!/]component\s([=+-]\S+)$", flags=re.MULTILINE)
 
 
 def triage(objects: dict[str, GH_OBJ]) -> None:
@@ -611,12 +614,13 @@ def triage(objects: dict[str, GH_OBJ]) -> None:
 
         # commands
         # TODO negate commands
-        commands_found = []
-        # TODO is concatenation of all strings first faster?
-        for comment_able in itertools.chain(
-            (obj.body,), (e["body"] for e in obj.events if e["name"] == "IssueComment")
-        ):
-            commands_found.extend(commands_re.findall(comment_able))
+        comment_able = "\n".join(
+            itertools.chain(
+                (obj.body,),
+                (e["body"] for e in obj.events if e["name"] == "IssueComment"),
+            )
+        )
+        commands_found = commands_re.findall(comment_able)
 
         # bot_skip/bot_broken
         skip_this = False
@@ -702,19 +706,27 @@ def triage(objects: dict[str, GH_OBJ]) -> None:
             return rv
 
         # components
-        # TODO read !component command
-        components = []
         if isinstance(obj, PR):
             components = obj.files
         elif isinstance(obj, Issue):
             if match := component_re.search(obj.body):
                 components = process_component(match.group(1).splitlines())
 
-        logging.info(
-            f"{obj.__class__.__name__} #{obj.number}: indentified components: {', '.join(components)}"
-        )
+        for component_command in component_command_re.findall(comment_able):
+            path = component_command[1:]
+            if component_command.startswith("="):
+                components = [path]
+            elif component_command.startswith("+"):
+                components.append(path)
+            elif component_command.startswith("-"):
+                if path in components:
+                    components.remove(path)
 
-        # TODO store components on the object
+        obj.components = components
+
+        logging.info(
+            f"{obj.__class__.__name__} #{obj.number}: indentified components: {', '.join(obj.components)}"
+        )
 
         # object type
         if match := obj_type_re.search(obj.body):
@@ -736,6 +748,7 @@ def triage(objects: dict[str, GH_OBJ]) -> None:
             else:
                 to_unlabel.append("backport")
 
+        # TODO conflicting actions
         if common_labels := set(to_label).intersection(to_unlabel):
             raise AssertionError(
                 f"The following labels were scheduled to be both added and removed {', '.join(common_labels)}"
@@ -796,6 +809,9 @@ def daemon() -> None:
         objs = fetch_objects()
         if objs:
             triage(objs)
+            with shelve.open(CACHE_FILENAME) as cache:
+                for number, obj in objs.items():
+                    cache[str(number)] = obj.components
             logging.info(
                 f"Took {time.time() - start:.2f} seconds to triage {len(objs)} issues/PRs"
                 f" and {request_counter} HTTP requests"
