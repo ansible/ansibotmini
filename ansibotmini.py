@@ -588,6 +588,9 @@ def fetch_objects() -> dict[str, GH_OBJ]:
 component_re = re.compile(
     r"#{3,5}\scomponent\sname(.+?)(?=#{3,5})", flags=re.IGNORECASE | re.DOTALL
 )
+obj_type_re = re.compile(
+    r"#{3,5}\sissue\stype(.+?)(?=#{3,5})", flags=re.IGNORECASE | re.DOTALL
+)
 valid_commands = (
     "bot_skip",
     "bot_broken",
@@ -712,6 +715,18 @@ def triage(objects: dict[str, GH_OBJ]) -> None:
         )
 
         # TODO store components on the object
+
+        # object type
+        if match := obj_type_re.search(obj.body):
+            data = re.sub(r"~[^~]+~", "", match.group(1).lower())
+            if "feature" in data:
+                to_label.append("feature")
+            if "bug" in data:
+                to_label.append("bug")
+            if "documentation" in data or "docs" in data:
+                to_label.append("docs")
+            if "test" in data:
+                to_label.append("test")
 
         # PRs
         if isinstance(obj, PR):
