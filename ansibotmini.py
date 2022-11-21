@@ -23,6 +23,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
+STALE_ISSUE_DAYS = 7
 NEEDS_INFO_WARN_DAYS = 14
 NEEDS_INFO_CLOSE_DAYS = 28
 WAITING_ON_CONTRIBUTOR_CLOSE_DAYS = 365
@@ -552,10 +553,13 @@ def fetch_objects() -> dict[str, GH_OBJ]:
             number_map = collections.defaultdict(list)
             for future in concurrent.futures.as_completed(futures):
                 issue_type = futures[future]
+                now = datetime.datetime.now(datetime.timezone.utc)
                 number_map[issue_type] = [
                     (number, updated_at)
                     for number, updated_at in future.result()
-                    if number not in cache or cache[str(number)].updated_at < updated_at
+                    if number not in cache
+                    or cache[str(number)].updated_at < updated_at
+                    or (now - cache["last_triaged"]).days >= STALE_ISSUE_DAYS
                 ]
 
         if not number_map["issues"] and not number_map["prs"]:
@@ -823,6 +827,7 @@ def daemon(dry_run: t.Optional = None) -> None:
             with shelve.open(CACHE_FILENAME) as cache:
                 for number, obj in objs.items():
                     cache[str(number)] = obj.components
+                    cache["last_triaged"] = datetime.datetime.now(datetime.timezone.utc)
             logging.info(
                 f"Took {time.time() - start:.2f} seconds to triage {len(objs)} issues/PRs"
                 f" and {request_counter} HTTP requests"
