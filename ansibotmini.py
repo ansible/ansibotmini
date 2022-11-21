@@ -605,7 +605,7 @@ component_command_re = re.compile(r"^[!/]component\s([=+-]\S+)$", flags=re.MULTI
 version_re = re.compile(r"ansible\s\[core\s([^]]+)]")
 
 
-def triage(objects: dict[str, GH_OBJ]) -> None:
+def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
     for obj in objects.values():
         to_label = []
         to_unlabel = []
@@ -760,17 +760,22 @@ def triage(objects: dict[str, GH_OBJ]) -> None:
                 f"The following labels were scheduled to be both added and removed {', '.join(common_labels)}"
             )
 
-        # do actions
-        if to_label:
-            add_labels(obj, to_label)
-        if to_unlabel:
-            remove_labels(obj, to_unlabel)
+        if dry_run:
+            logging.info(f"add labels: {', '.join(to_label)}")
+            logging.info(f"remove labels: {', '.join(to_unlabel)}")
+            logging.info(f"comments: {', '.join(comments)}")
+            logging.info(f"close: {close}")
+        else:
+            if to_label:
+                add_labels(obj, to_label)
+            if to_unlabel:
+                remove_labels(obj, to_unlabel)
 
-        for comment in comments:
-            add_comment(obj, comment)
+            for comment in comments:
+                add_comment(obj, comment)
 
-        if close:
-            close_object(obj)
+            if close:
+                close_object(obj)
 
         logging.info(
             f"Done triaging {obj.__class__.__name__} {obj.title} (#{obj.number})"
@@ -807,14 +812,14 @@ def fetch_object_by_number(number: str) -> GH_OBJ:
     return obj
 
 
-def daemon() -> None:
+def daemon(dry_run: t.Optional = None) -> None:
     global request_counter
     while True:
         request_counter = 0
         start = time.time()
         objs = fetch_objects()
         if objs:
-            triage(objs)
+            triage(objs, dry_run)
             with shelve.open(CACHE_FILENAME) as cache:
                 for number, obj in objs.items():
                     cache[str(number)] = obj.components
@@ -838,7 +843,8 @@ def main() -> None:
         description="Triages github.com/ansible/ansible issues and PRs",
     )
     parser.add_argument("--number", help="Github issue or pull request number")
-    parser.add_argument("--debug")
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -848,9 +854,9 @@ def main() -> None:
     )
     if args.number:
         obj = fetch_object_by_number(args.number)
-        triage({args.number: obj})
+        triage({args.number: obj}, dry_run=args.dry_run)
     else:
-        daemon()
+        daemon(dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
