@@ -602,6 +602,7 @@ valid_commands = (
 # TODO '/' prefix?
 commands_re = re.compile(f"^{'|'.join(valid_commands)}$", flags=re.MULTILINE)
 component_command_re = re.compile(r"^[!/]component\s([=+-]\S+)$", flags=re.MULTILINE)
+version_re = re.compile(r"ansible\s\[core\s([^]]+)]")
 
 
 def triage(objects: dict[str, GH_OBJ]) -> None:
@@ -739,6 +740,11 @@ def triage(objects: dict[str, GH_OBJ]) -> None:
                 to_label.append("docs")
             if "test" in data:
                 to_label.append("test")
+
+        # version matcher
+        if match := version_re.search(obj.body):
+            # TODO do not add if a maintainer manually removed the label
+            to_label.append(f"affects_{'.'.join(match.group(1).split('.')[:2])}")
 
         # PRs
         if isinstance(obj, PR):
