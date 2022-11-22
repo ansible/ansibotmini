@@ -686,6 +686,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                             )
                         )
                 elif days_since > NEEDS_INFO_WARN_DAYS:
+                    # FIXME commented before?
                     with open("templates/needs_info_warn.tmpl") as f:
                         comments.append(
                             string.Template(f.read()).substitute(
@@ -766,6 +767,16 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 to_label.append("backport")
             else:
                 to_unlabel.append("backport")
+            # docs only
+            if all(c.startswith("docs/") for c in components):
+                to_label.append("docs_only")
+                if not any(
+                    e
+                    for e in obj.events
+                    if e["name"] == "IssueComment" and "<!--- boilerplate: docs_only --->" in e["body"]
+                ):
+                    with open("templates/docs_only.tmpl") as f:
+                        comments.append(f.read())
 
         # TODO conflicting actions
         if common_labels := set(to_label).intersection(to_unlabel):
