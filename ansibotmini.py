@@ -699,25 +699,32 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
             rv = []
             for line in data:
                 for c in line.split(","):
-                    if "<!--" in c or "-->" in c:
+                    if "<!--" in c or "-->" in c or " " in c:
                         continue
+                    if "#" in c:
+                        c = c.split("#")[0]
                     if c := (
                         c.strip("\t\n\r ")
                         .lower()
                         .removeprefix("the ")
+                        .removeprefix("ansible.builtin.")
                         .removeprefix("module ")
                         .removesuffix(" module")
+                        .replace("\\", "")
                     ):
                         rv.append(c)
 
             return rv
 
         # components
+        components = []
         if isinstance(obj, PR):
             components = obj.files
         elif isinstance(obj, Issue):
             if match := component_re.search(obj.body):
-                components = process_component(match.group(1).splitlines())
+                components = match_existing_components(
+                    process_component(match.group(1).splitlines())
+                )
 
         for component_command in component_command_re.findall(comment_able):
             path = component_command[1:]
@@ -786,6 +793,77 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         logging.info(
             f"Done triaging {obj.__class__.__name__} {obj.title} (#{obj.number})"
         )
+
+
+def match_existing_components(filenames: list[str]) -> list[str]:
+    if not filenames:
+        return []
+    query_fmt = """
+        {
+          repository(owner: "ansible", name: "ansible") {
+            %s
+          }
+        }
+    """
+
+    plugins = [
+        "action",
+        "become",
+        "cache",
+        "callback",
+        "cliconf",
+        "connection",
+        "doc_fragments",
+        "filter",
+        "httpapi",
+        "inventory",
+        "lookup",
+        "netconf",
+        "shell",
+        "strategy",
+        "terminal",
+        "test",
+        "vars",
+    ]
+    paths = ["lib/ansible/modules/"]
+    paths.extend((f"lib/ansible/plugins/{name}/" for name in plugins))
+    files = []
+    component_to_path = {}
+    # TODO simplify
+    for i, filename in enumerate(filenames):
+        if "/" in filename:
+            files.append(
+                """
+                    file%s: object(expression: "HEAD:%s") {
+                      ... on Blob {
+                        byteSize
+                      }
+                    }
+                """
+                % (i, filename)
+            )
+            component_to_path[f"file{i}"] = filename
+        else:
+            tried_paths = paths
+            for idx, path in enumerate(tried_paths):
+                files.append(
+                    """
+                        file%s: object(expression: "HEAD:%s%s.py") {
+                          ... on Blob {
+                            byteSize
+                          }
+                        }
+                    """
+                    % (f"{i}{idx}", path, filename)
+                )
+                component_to_path[f"file{i}{idx}"] = path + filename + ".py"
+
+    resp = send_query(json.dumps({"query": query_fmt % " ".join(files)}))
+    return [
+        component_to_path[file]
+        for file, res in resp.json()["data"]["repository"].items()
+        if res is not None
+    ]
 
 
 def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
