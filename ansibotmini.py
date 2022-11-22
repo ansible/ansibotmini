@@ -220,6 +220,7 @@ class Issue:
     labels: dict[str, str]
     updated_at: datetime.datetime
     components: list[str]
+    last_triaged: datetime.datetime
 
 
 @dataclass
@@ -535,6 +536,7 @@ def fetch_object(
         labels={node["name"]: node["id"] for node in o["labels"].get("nodes", [])},
         updated_at=updated_at,
         components=[],
+        last_triaged=datetime.datetime.now(datetime.timezone.utc),
     )
     if object_name == "pullRequest":
         kwargs["branch"] = o["baseRef"]["name"]
@@ -559,7 +561,7 @@ def fetch_objects() -> dict[str, GH_OBJ]:
                     for number, updated_at in future.result()
                     if number not in cache
                     or cache[str(number)].updated_at < updated_at
-                    or (now - cache["last_triaged"]).days >= STALE_ISSUE_DAYS
+                    or (now - cache[str(number)].last_triaged).days >= STALE_ISSUE_DAYS
                 ]
 
         if not number_map["issues"] and not number_map["prs"]:
@@ -823,11 +825,12 @@ def daemon(dry_run: t.Optional = None) -> None:
         start = time.time()
         objs = fetch_objects()
         if objs:
+            # TODO multiprocess?
             triage(objs, dry_run)
             with shelve.open(CACHE_FILENAME) as cache:
                 for number, obj in objs.items():
-                    cache[str(number)] = obj.components
-                    cache["last_triaged"] = datetime.datetime.now(datetime.timezone.utc)
+                    obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
+                    cache[str(number)] = obj
             logging.info(
                 f"Took {time.time() - start:.2f} seconds to triage {len(objs)} issues/PRs"
                 f" and {request_counter} HTTP requests"
