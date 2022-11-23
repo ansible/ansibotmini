@@ -237,7 +237,7 @@ request_counter = 0
 
 def http_request(
     url: str,
-    data: str,
+    data: str = "",
     headers: t.Optional[t.MutableMapping[str, str]] = None,
     method: str = "GET",
     encoding: str = "utf-8",
