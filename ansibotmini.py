@@ -604,6 +604,7 @@ valid_commands = (
     "bot_broken",
     "needs_info",
     "waiting_on_contributor",
+    "!needs_collection_redirect",
 )
 # TODO '/' prefix?
 commands_re = re.compile(f"^{'|'.join(valid_commands)}$", flags=re.MULTILINE)
@@ -612,6 +613,9 @@ version_re = re.compile(r"ansible\s\[core\s([^]]+)]")
 
 
 def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
+    valid_collections = http_request(
+        "https://sivel.eng.ansible.com/api/v1/collections/list"
+    ).json()
     for obj in objects.values():
         to_label = []
         to_unlabel = []
@@ -735,9 +739,41 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
             components = obj.files
         elif isinstance(obj, Issue):
             if match := component_re.search(obj.body):
-                components = match_existing_components(
-                    process_component(match.group(1).splitlines())
-                )
+                components = process_component(match.group(1).splitlines())
+                # collections redirect
+                if "!needs_collection_redirect" not in commands_found:
+                    if components_from_collections := list(
+                        filter(
+                            lambda x: len(x.split(".")) == 3
+                            and ".".join(x.split(".")[:2]) in valid_collections,
+                            components,
+                        ),
+                    ):
+                        entries = []
+                        for component in components_from_collections:
+                            fqcn = ".".join(component.split(".")[:2])
+                            repo = valid_collections[fqcn]["manifest"][
+                                "collection_info"
+                            ]["repository"]
+                            galaxy_url = "https://galaxy.ansible.com/" + fqcn.replace(
+                                ".", "/"
+                            )
+                            entries.append(f"* {component} -> {repo} ({galaxy_url})")
+
+                        with open(
+                            os.path.join(
+                                os.path.dirname(__file__),
+                                "templates/collection_redirect.tmpl",
+                            )
+                        ) as f:
+                            comments.append(
+                                string.Template(f.read()).substitute(
+                                    components="\n".join(entries)
+                                )
+                            )
+                        to_label.append("bot_closed")
+                        close = True
+                components = match_existing_components(components)
 
         for component_command in component_command_re.findall(comment_able):
             path = component_command[1:]
