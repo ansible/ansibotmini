@@ -666,7 +666,11 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
             close = True
             to_label.append("bot_closed")
             to_unlabel.append("waiting_on_contributor")
-            with open("templates/waiting_on_contributor.tmpl") as f:
+            with open(
+                os.path.join(
+                    os.path.dirname(__file__), "templates/waiting_on_contributor.tmpl"
+                )
+            ) as f:
                 comments.append(f.read())
 
         # needs_info
@@ -679,7 +683,11 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 ).days
                 if days_since > NEEDS_INFO_CLOSE_DAYS:
                     close = True
-                    with open("templates/needs_info_close.tmpl") as f:
+                    with open(
+                        os.path.join(
+                            os.path.dirname(__file__), "templates/needs_info_close.tmpl"
+                        )
+                    ) as f:
                         comments.append(
                             string.Template(f.read()).substitute(
                                 author=obj.author, object_type=obj.__class__.__name__
@@ -687,7 +695,11 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                         )
                 elif days_since > NEEDS_INFO_WARN_DAYS:
                     # FIXME commented before?
-                    with open("templates/needs_info_warn.tmpl") as f:
+                    with open(
+                        os.path.join(
+                            os.path.dirname(__file__), "templates/needs_info_warn.tmpl"
+                        )
+                    ) as f:
                         comments.append(
                             string.Template(f.read()).substitute(
                                 author=obj.author, object_type=obj.__class__.__name__
@@ -773,9 +785,14 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 if not any(
                     e
                     for e in obj.events
-                    if e["name"] == "IssueComment" and "<!--- boilerplate: docs_only --->" in e["body"]
+                    if e["name"] == "IssueComment"
+                    and "<!--- boilerplate: docs_only --->" in e["body"]
                 ):
-                    with open("templates/docs_only.tmpl") as f:
+                    with open(
+                        os.path.join(
+                            os.path.dirname(__file__), "templates/docs_only.tmpl"
+                        )
+                    ) as f:
                         comments.append(f.read())
 
         # TODO conflicting actions
