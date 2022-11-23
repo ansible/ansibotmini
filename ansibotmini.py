@@ -23,6 +23,30 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
+GALAXY_URL = "https://galaxy.ansible.com/"
+
+COLLECTIONS_LIST_ENDPOINT = "https://sivel.eng.ansible.com/api/v1/collections/list"
+
+ANSIBLE_PLUGINS = [
+    "action",
+    "become",
+    "cache",
+    "callback",
+    "cliconf",
+    "connection",
+    "doc_fragments",
+    "filter",
+    "httpapi",
+    "inventory",
+    "lookup",
+    "netconf",
+    "shell",
+    "strategy",
+    "terminal",
+    "test",
+    "vars",
+]
+
 STALE_ISSUE_DAYS = 7
 NEEDS_INFO_WARN_DAYS = 14
 NEEDS_INFO_CLOSE_DAYS = 28
@@ -612,10 +636,30 @@ component_command_re = re.compile(r"^[!/]component\s([=+-]\S+)$", flags=re.MULTI
 version_re = re.compile(r"ansible\s\[core\s([^]]+)]")
 
 
+def process_component(data):
+    rv = []
+    for line in data:
+        for c in line.split(","):
+            if "<!--" in c or "-->" in c or " " in c:
+                continue
+            if "#" in c:
+                c = c.split("#")[0]
+            if c := (
+                c.strip("\t\n\r ")
+                .lower()
+                .removeprefix("the ")
+                .removeprefix("ansible.builtin.")
+                .removeprefix("module ")
+                .removesuffix(" module")
+                .replace("\\", "")
+            ):
+                rv.append(c)
+
+    return rv
+
+
 def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
-    valid_collections = http_request(
-        "https://sivel.eng.ansible.com/api/v1/collections/list"
-    ).json()
+    valid_collections = http_request(COLLECTIONS_LIST_ENDPOINT).json()
     for obj in objects.values():
         to_label = []
         to_unlabel = []
@@ -670,11 +714,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
             close = True
             to_label.append("bot_closed")
             to_unlabel.append("waiting_on_contributor")
-            with open(
-                os.path.join(
-                    os.path.dirname(__file__), "templates/waiting_on_contributor.tmpl"
-                )
-            ) as f:
+            with open(get_template_path("waiting_on_contributor")) as f:
                 comments.append(f.read())
 
         # needs_info
@@ -687,11 +727,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 ).days
                 if days_since > NEEDS_INFO_CLOSE_DAYS:
                     close = True
-                    with open(
-                        os.path.join(
-                            os.path.dirname(__file__), "templates/needs_info_close.tmpl"
-                        )
-                    ) as f:
+                    with open(get_template_path("needs_info_close")) as f:
                         comments.append(
                             string.Template(f.read()).substitute(
                                 author=obj.author, object_type=obj.__class__.__name__
@@ -699,11 +735,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                         )
                 elif days_since > NEEDS_INFO_WARN_DAYS:
                     # FIXME commented before?
-                    with open(
-                        os.path.join(
-                            os.path.dirname(__file__), "templates/needs_info_warn.tmpl"
-                        )
-                    ) as f:
+                    with open(get_template_path("needs_info_warn")) as f:
                         comments.append(
                             string.Template(f.read()).substitute(
                                 author=obj.author, object_type=obj.__class__.__name__
@@ -711,27 +743,6 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                         )
             else:
                 to_unlabel.append("needs_info")
-
-        def process_component(data):
-            rv = []
-            for line in data:
-                for c in line.split(","):
-                    if "<!--" in c or "-->" in c or " " in c:
-                        continue
-                    if "#" in c:
-                        c = c.split("#")[0]
-                    if c := (
-                        c.strip("\t\n\r ")
-                        .lower()
-                        .removeprefix("the ")
-                        .removeprefix("ansible.builtin.")
-                        .removeprefix("module ")
-                        .removesuffix(" module")
-                        .replace("\\", "")
-                    ):
-                        rv.append(c)
-
-            return rv
 
         # components
         components = []
@@ -755,17 +766,10 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                             repo = valid_collections[fqcn]["manifest"][
                                 "collection_info"
                             ]["repository"]
-                            galaxy_url = "https://galaxy.ansible.com/" + fqcn.replace(
-                                ".", "/"
-                            )
+                            galaxy_url = GALAXY_URL + fqcn.replace(".", "/")
                             entries.append(f"* {component} -> {repo} ({galaxy_url})")
 
-                        with open(
-                            os.path.join(
-                                os.path.dirname(__file__),
-                                "templates/collection_redirect.tmpl",
-                            )
-                        ) as f:
+                        with open(get_template_path("collection_redirect")) as f:
                             comments.append(
                                 string.Template(f.read()).substitute(
                                     components="\n".join(entries)
@@ -859,9 +863,14 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         )
 
 
+def get_template_path(name: str) -> str:
+    return os.path.join(os.path.dirname(__file__), "templates", f"{name}.tmpl")
+
+
 def match_existing_components(filenames: list[str]) -> list[str]:
     if not filenames:
         return []
+
     query_fmt = """
         {
           repository(owner: "ansible", name: "ansible") {
@@ -869,58 +878,28 @@ def match_existing_components(filenames: list[str]) -> list[str]:
           }
         }
     """
-
-    plugins = [
-        "action",
-        "become",
-        "cache",
-        "callback",
-        "cliconf",
-        "connection",
-        "doc_fragments",
-        "filter",
-        "httpapi",
-        "inventory",
-        "lookup",
-        "netconf",
-        "shell",
-        "strategy",
-        "terminal",
-        "test",
-        "vars",
-    ]
+    file_fmt = """
+        %s: object(expression: "HEAD:%s") {
+          ... on Blob {
+            byteSize
+          }
+        }
+    """
     paths = ["lib/ansible/modules/"]
-    paths.extend((f"lib/ansible/plugins/{name}/" for name in plugins))
+    paths.extend((f"lib/ansible/plugins/{name}/" for name in ANSIBLE_PLUGINS))
     files = []
     component_to_path = {}
-    # TODO simplify
     for i, filename in enumerate(filenames):
         if "/" in filename:
-            files.append(
-                """
-                    file%s: object(expression: "HEAD:%s") {
-                      ... on Blob {
-                        byteSize
-                      }
-                    }
-                """
-                % (i, filename)
-            )
-            component_to_path[f"file{i}"] = filename
+            query_name = f"file{i}"
+            files.append(file_fmt % (query_name, filename))
+            component_to_path[query_name] = filename
         else:
-            tried_paths = paths
-            for idx, path in enumerate(tried_paths):
-                files.append(
-                    """
-                        file%s: object(expression: "HEAD:%s%s.py") {
-                          ... on Blob {
-                            byteSize
-                          }
-                        }
-                    """
-                    % (f"{i}{idx}", path, filename)
-                )
-                component_to_path[f"file{i}{idx}"] = path + filename + ".py"
+            for j, path in enumerate(paths):
+                query_name = f"file{i}{j}"
+                fname = f"{path}{filename}.py"
+                files.append(file_fmt % (query_name, fname))
+                component_to_path[query_name] = fname
 
     resp = send_query(json.dumps({"query": query_fmt % " ".join(files)}))
     return [
