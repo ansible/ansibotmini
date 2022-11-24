@@ -461,6 +461,29 @@ def close_object(obj: GH_OBJ) -> None:
         close_pr(obj.id)
 
 
+def get_pr_state(number: int) -> str:
+    query = """
+    query($number: Int!)
+    {
+      repository(owner: "ansible", name: "ansible") {
+        pullRequest(number: $number) {
+          state
+        }
+      }
+    }
+    """
+    resp = send_query(
+        json.dumps(
+            {
+                "query": query,
+                "variables": {"number": number},
+            }
+        )
+    )
+
+    return resp.json()["data"]["repository"]["pullRequest"]["state"]
+
+
 def process_events(issue: dict[str, t.Any]) -> list[dict[str, str]]:
     rv = []
     for node in issue["timelineItems"]["nodes"]:
@@ -688,6 +711,13 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 break
         if skip_this:
             continue
+
+        # resolved_by_pr
+        if match := re.search(
+            r"^resolved_by_pr\s([#0-9]+)$", comment_able, re.MULTILINE
+        ):
+            if get_pr_state(int(match.group(1).removeprefix("#"))).lower() == "merged":
+                close = True
 
         # label commands
         for command in ("needs_info", "waiting_on_contributor"):
