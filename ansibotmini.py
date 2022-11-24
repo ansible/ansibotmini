@@ -764,13 +764,23 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                             )
                         )
                 elif days_since > NEEDS_INFO_WARN_DAYS:
-                    # FIXME commented before?
-                    with open(get_template_path("needs_info_warn")) as f:
-                        comments.append(
-                            string.Template(f.read()).substitute(
-                                author=obj.author, object_type=obj.__class__.__name__
+                    last_warned = max(
+                        [
+                            e["created_at"]
+                            for e in obj.events
+                            if e["name"] == "IssueComment"
+                            and "<!--- boilerplate: needs_info_warn --->" in e["body"]
+                        ],
+                        None,
+                    )
+                    if last_warned is None or last_warned < labeled_datetime:
+                        with open(get_template_path("needs_info_warn")) as f:
+                            comments.append(
+                                string.Template(f.read()).substitute(
+                                    author=obj.author,
+                                    object_type=obj.__class__.__name__,
+                                )
                             )
-                        )
             else:
                 to_unlabel.append("needs_info")
 
