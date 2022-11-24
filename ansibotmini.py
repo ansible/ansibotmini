@@ -484,6 +484,28 @@ def get_pr_state(number: int) -> str:
     return resp.json()["data"]["repository"]["pullRequest"]["state"]
 
 
+def get_committers() -> list[str]:
+    query = """
+    query {
+      organization(login: "ansible") {
+        team(slug: "ansible-commit") {
+          members {
+            nodes {
+              login
+            }
+          }
+        }
+      }
+    }
+    """
+    resp = send_query(json.dumps({"query": query}))
+
+    return [
+        n["login"]
+        for n in resp.json()["data"]["organization"]["team"]["members"]["nodes"]
+    ]
+
+
 def process_events(issue: dict[str, t.Any]) -> list[dict[str, str]]:
     rv = []
     for node in issue["timelineItems"]["nodes"]:
@@ -683,6 +705,7 @@ def process_component(data):
 
 def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
     valid_collections = http_request(COLLECTIONS_LIST_ENDPOINT).json()
+    committers = get_committers()
     for obj in objects.values():
         to_label = []
         to_unlabel = []
@@ -771,7 +794,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                             if e["name"] == "IssueComment"
                             and "<!--- boilerplate: needs_info_warn --->" in e["body"]
                         ],
-                        None,
+                        default=None,
                     )
                     if last_warned is None or last_warned < labeled_datetime:
                         with open(get_template_path("needs_info_warn")) as f:
@@ -849,8 +872,15 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
 
         # version matcher
         if match := version_re.search(obj.body):
-            # TODO do not add if a maintainer manually removed the label
-            to_label.append(f"affects_{'.'.join(match.group(1).split('.')[:2])}")
+            label_name = f"affects_{'.'.join(match.group(1).split('.')[:2])}"
+            if not any(
+                e
+                for e in obj.events
+                if e["name"] == "UnlabeledEvent"
+                and e["author"] in committers
+                and e["label"] == label_name
+            ):
+                to_label.append(label_name)
 
         # PRs
         if isinstance(obj, PR):
