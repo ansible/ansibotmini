@@ -238,6 +238,27 @@ files(first: 50) {
     path
   }
 }
+commits(last: 1) {
+  nodes {
+    commit {
+      checkSuites(last: 1) {
+        nodes {
+          checkRuns(last: 1) {
+            nodes {
+              detailsUrl
+            }
+          }
+          conclusion
+          updatedAt
+          status
+          app {
+            name
+          }
+        }
+      }
+    }
+  }
+}
 """,
 )
 
@@ -271,6 +292,15 @@ class Issue:
 class PR(Issue):
     branch: str
     files: list[str]
+    ci: CI
+
+
+@dataclass
+class CI:
+    build_id: int
+    conclusion: str
+    status: str
+    updated_at: datetime.datetime
 
 
 GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
@@ -949,6 +979,17 @@ def fetch_object(
     if object_name == "pullRequest":
         kwargs["branch"] = o["baseRef"]["name"]
         kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
+        check_suite = o["commits"]["nodes"][0]["commit"]["checkSuites"]["nodes"][0]
+        build_id = re.search(
+            r"https://dev\.azure\.com/(?P<organization>[^/]+)/(?P<project>[^/]+)/_build/results\?buildId=(?P<buildId>[0-9]+)",
+            check_suite["checkRuns"]["nodes"][0]["detailsUrl"],
+        ).group("buildId")
+        kwargs["ci"] = CI(
+            build_id=build_id,
+            conclusion=check_suite["conclusion"],
+            status=check_suite["status"],
+            updated_at=datetime.datetime.fromisoformat(check_suite["updatedAt"]),
+        )
 
     return obj(**kwargs)
 
