@@ -59,6 +59,26 @@ config = configparser.ConfigParser()
 config.read(CONFIG_FILENAME)
 gh_token = config.get("default", "gh_token")
 
+COMPONENT_RE = re.compile(
+    r"#{3,5}\scomponent\sname(.+?)(?=#{3,5})", flags=re.IGNORECASE | re.DOTALL
+)
+OBJ_TYPE_RE = re.compile(
+    r"#{3,5}\sissue\stype(.+?)(?=#{3,5})", flags=re.IGNORECASE | re.DOTALL
+)
+VERSION_RE = re.compile(r"ansible\s\[core\s([^]]+)]")
+COMPONENT_COMMAND_RE = re.compile(
+    r"^(?:@ansibot\s)?!component\s([=+-]\S+)$", flags=re.MULTILINE
+)
+
+VALID_COMMANDS = (
+    "bot_skip",
+    "bot_broken",
+    "needs_info",
+    "waiting_on_contributor",
+    "!needs_collection_redirect",
+)
+COMMANDS_RE = re.compile(f"^(?:{'|'.join(VALID_COMMANDS)})$", flags=re.MULTILINE)
+
 HEADERS = {
     "Accept": "application/json",
     "Authorization": f"Bearer {gh_token}",
@@ -506,183 +526,6 @@ def get_committers() -> list[str]:
     ]
 
 
-def process_events(issue: dict[str, t.Any]) -> list[dict[str, str]]:
-    rv = []
-    for node in issue["timelineItems"]["nodes"]:
-        event = dict(
-            name=node["__typename"],
-            created_at=datetime.datetime.fromisoformat(node["createdAt"]),
-        )
-        if node["__typename"] in ["LabeledEvent", "UnlabeledEvent"]:
-            event["label"] = node["label"]["name"]
-            event["author"] = node["actor"]["login"]
-        elif node["__typename"] == "IssueComment":
-            event["body"] = node["body"]
-            event["updated_at"] = datetime.datetime.fromisoformat(node["updatedAt"])
-            event["author"] = (
-                node["author"]["login"] if node["author"] is not None else ""
-            )
-        elif node["__typename"] == "CrossReferencedEvent":
-            event["number"] = node["source"]["number"]
-            event["repo"] = node["source"]["repository"]
-            event["owner"] = (
-                node["source"]["repository"].get("owner", {}).get("name", "")
-            )
-        rv.append(event)
-
-    return rv
-
-
-def get_gh_objects(obj_name: str) -> list[tuple[str, datetime.datetime]]:
-    query = QUERY_ISSUE_NUMBERS if obj_name == "issues" else QUERY_PR_NUMBERS
-    rv = []
-    variables = {}
-    while True:
-        resp = send_query(
-            json.dumps(
-                {
-                    "query": query,
-                    "variables": variables,
-                }
-            )
-        )
-        data = resp.json()["data"]
-        logging.info(data["rateLimit"])
-
-        objs = data["repository"][obj_name]
-        for node in objs["nodes"]:
-            updated_ats = [
-                node["updatedAt"],
-                node["timelineItems"]["updatedAt"],
-            ]
-            if obj_name == "pullRequests":
-                last_commit = node["commits"]["nodes"][0]["commit"]
-                if ci_results := last_commit["checkSuites"]["nodes"]:
-                    updated_ats.append(ci_results[0]["updatedAt"])
-            rv.append(
-                (
-                    str(node["number"]),
-                    max(map(datetime.datetime.fromisoformat, updated_ats)),
-                )
-            )
-
-        if objs["pageInfo"]["hasNextPage"]:
-            variables["after"] = objs["pageInfo"]["endCursor"]
-        else:
-            break
-
-    return rv
-
-
-def fetch_object(
-    number: str,
-    obj: GH_OBJ_T,
-    object_name: str,
-    updated_at: t.Optional[datetime.datetime] = None,
-) -> GH_OBJ:
-    query = QUERY_SINGLE_ISSUE if object_name == "issue" else QUERY_SINGLE_PR
-    resp = send_query(
-        json.dumps(
-            {
-                "query": query,
-                "variables": {"number": int(number)},
-            }
-        )
-    )
-    data = resp.json()["data"]
-    logging.info(data["rateLimit"])
-    o = data["repository"][object_name]
-    if o is None:
-        raise ValueError(f"{number} not found")
-
-    kwargs = dict(
-        id=o["id"],
-        author=o["author"]["login"] if o["author"] else "ghost",
-        number=o["number"],
-        title=o["title"],
-        body=o["body"],
-        events=process_events(o),
-        labels={node["name"]: node["id"] for node in o["labels"].get("nodes", [])},
-        updated_at=updated_at,
-        components=[],
-        last_triaged=datetime.datetime.now(datetime.timezone.utc),
-    )
-    if object_name == "pullRequest":
-        kwargs["branch"] = o["baseRef"]["name"]
-        kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
-
-    return obj(**kwargs)
-
-
-def fetch_objects() -> dict[str, GH_OBJ]:
-    with shelve.open(CACHE_FILENAME) as cache:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {
-                executor.submit(get_gh_objects, "issues"): "issues",
-                executor.submit(get_gh_objects, "pullRequests"): "prs",
-            }
-            number_map = collections.defaultdict(list)
-            for future in concurrent.futures.as_completed(futures):
-                issue_type = futures[future]
-                now = datetime.datetime.now(datetime.timezone.utc)
-                number_map[issue_type] = [
-                    (number, updated_at)
-                    for number, updated_at in future.result()
-                    if number not in cache
-                    or cache[str(number)].updated_at < updated_at
-                    or (now - cache[str(number)].last_triaged).days >= STALE_ISSUE_DAYS
-                ]
-
-        if not number_map["issues"] and not number_map["prs"]:
-            return {}
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            futures = []
-            for object_name, obj, data in (
-                ("issue", Issue, number_map["issues"]),
-                ("pullRequest", PR, number_map["prs"]),
-            ):
-                for number, updated_at in data:
-                    futures.append(
-                        executor.submit(
-                            fetch_object,
-                            number,
-                            obj,
-                            object_name,
-                            updated_at,
-                        )
-                    )
-
-            data = {}
-            for future in concurrent.futures.as_completed(futures):
-                obj = future.result()
-                data[str(obj.number)] = obj
-
-            cache.update(data)
-            return data
-
-
-COMPONENT_RE = re.compile(
-    r"#{3,5}\scomponent\sname(.+?)(?=#{3,5})", flags=re.IGNORECASE | re.DOTALL
-)
-OBJ_TYPE_RE = re.compile(
-    r"#{3,5}\sissue\stype(.+?)(?=#{3,5})", flags=re.IGNORECASE | re.DOTALL
-)
-VERSION_RE = re.compile(r"ansible\s\[core\s([^]]+)]")
-COMPONENT_COMMAND_RE = re.compile(
-    r"^(?:@ansibot\s)?!component\s([=+-]\S+)$", flags=re.MULTILINE
-)
-
-VALID_COMMANDS = (
-    "bot_skip",
-    "bot_broken",
-    "needs_info",
-    "waiting_on_contributor",
-    "!needs_collection_redirect",
-)
-COMMANDS_RE = re.compile(f"^(?:{'|'.join(VALID_COMMANDS)})$", flags=re.MULTILINE)
-
-
 def process_component(data):
     rv = []
     for line in data:
@@ -703,6 +546,73 @@ def process_component(data):
                 rv.append(c)
 
     return rv
+
+
+def get_template_path(name: str) -> str:
+    return os.path.join(os.path.dirname(__file__), "templates", f"{name}.tmpl")
+
+
+def match_existing_components(filenames: list[str]) -> list[str]:
+    if not filenames:
+        return []
+
+    query_fmt = """
+        {
+          repository(owner: "ansible", name: "ansible") {
+            %s
+          }
+        }
+    """
+    file_fmt = """
+        %s: object(expression: "HEAD:%s") {
+          ... on Blob {
+            byteSize
+          }
+        }
+    """
+    paths = ["lib/ansible/modules/"]
+    paths.extend((f"lib/ansible/plugins/{name}/" for name in ANSIBLE_PLUGINS))
+    files = []
+    component_to_path = {}
+    for i, filename in enumerate(filenames):
+        if "/" in filename:
+            query_name = f"file{i}"
+            files.append(file_fmt % (query_name, filename))
+            component_to_path[query_name] = filename
+        else:
+            for j, path in enumerate(paths):
+                query_name = f"file{i}{j}"
+                fname = f"{path}{filename}.py"
+                files.append(file_fmt % (query_name, fname))
+                component_to_path[query_name] = fname
+
+    resp = send_query(json.dumps({"query": query_fmt % " ".join(files)}))
+    return [
+        component_to_path[file]
+        for file, res in resp.json()["data"]["repository"].items()
+        if res is not None
+    ]
+
+
+def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
+    return max(
+        (
+            e["created_at"]
+            for e in obj.events
+            if e["name"] == "LabeledEvent" and e["label"] == name
+        )
+    )
+
+
+def last_commented_by(obj: GH_OBJ, name: str) -> datetime.datetime:
+    return max(
+        (
+            e["created_at"]
+            for e in obj.events
+            if e["name"] == "IssueComment" and e["author"] == name
+        ),
+        default=None,
+    )
 
 
 def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
@@ -935,71 +845,112 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         )
 
 
-def get_template_path(name: str) -> str:
-    return os.path.join(os.path.dirname(__file__), "templates", f"{name}.tmpl")
+def process_events(issue: dict[str, t.Any]) -> list[dict[str, str]]:
+    rv = []
+    for node in issue["timelineItems"]["nodes"]:
+        event = dict(
+            name=node["__typename"],
+            created_at=datetime.datetime.fromisoformat(node["createdAt"]),
+        )
+        if node["__typename"] in ["LabeledEvent", "UnlabeledEvent"]:
+            event["label"] = node["label"]["name"]
+            event["author"] = node["actor"]["login"]
+        elif node["__typename"] == "IssueComment":
+            event["body"] = node["body"]
+            event["updated_at"] = datetime.datetime.fromisoformat(node["updatedAt"])
+            event["author"] = (
+                node["author"]["login"] if node["author"] is not None else ""
+            )
+        elif node["__typename"] == "CrossReferencedEvent":
+            event["number"] = node["source"]["number"]
+            event["repo"] = node["source"]["repository"]
+            event["owner"] = (
+                node["source"]["repository"].get("owner", {}).get("name", "")
+            )
+        rv.append(event)
+
+    return rv
 
 
-def match_existing_components(filenames: list[str]) -> list[str]:
-    if not filenames:
-        return []
+def get_gh_objects(obj_name: str) -> list[tuple[str, datetime.datetime]]:
+    query = QUERY_ISSUE_NUMBERS if obj_name == "issues" else QUERY_PR_NUMBERS
+    rv = []
+    variables = {}
+    while True:
+        resp = send_query(
+            json.dumps(
+                {
+                    "query": query,
+                    "variables": variables,
+                }
+            )
+        )
+        data = resp.json()["data"]
+        logging.info(data["rateLimit"])
 
-    query_fmt = """
-        {
-          repository(owner: "ansible", name: "ansible") {
-            %s
-          }
-        }
-    """
-    file_fmt = """
-        %s: object(expression: "HEAD:%s") {
-          ... on Blob {
-            byteSize
-          }
-        }
-    """
-    paths = ["lib/ansible/modules/"]
-    paths.extend((f"lib/ansible/plugins/{name}/" for name in ANSIBLE_PLUGINS))
-    files = []
-    component_to_path = {}
-    for i, filename in enumerate(filenames):
-        if "/" in filename:
-            query_name = f"file{i}"
-            files.append(file_fmt % (query_name, filename))
-            component_to_path[query_name] = filename
+        objs = data["repository"][obj_name]
+        for node in objs["nodes"]:
+            updated_ats = [
+                node["updatedAt"],
+                node["timelineItems"]["updatedAt"],
+            ]
+            if obj_name == "pullRequests":
+                last_commit = node["commits"]["nodes"][0]["commit"]
+                if ci_results := last_commit["checkSuites"]["nodes"]:
+                    updated_ats.append(ci_results[0]["updatedAt"])
+            rv.append(
+                (
+                    str(node["number"]),
+                    max(map(datetime.datetime.fromisoformat, updated_ats)),
+                )
+            )
+
+        if objs["pageInfo"]["hasNextPage"]:
+            variables["after"] = objs["pageInfo"]["endCursor"]
         else:
-            for j, path in enumerate(paths):
-                query_name = f"file{i}{j}"
-                fname = f"{path}{filename}.py"
-                files.append(file_fmt % (query_name, fname))
-                component_to_path[query_name] = fname
+            break
 
-    resp = send_query(json.dumps({"query": query_fmt % " ".join(files)}))
-    return [
-        component_to_path[file]
-        for file, res in resp.json()["data"]["repository"].items()
-        if res is not None
-    ]
+    return rv
 
 
-def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
-    return max(
-        (
-            e["created_at"]
-            for e in obj.events
-            if e["name"] == "LabeledEvent" and e["label"] == name
+def fetch_object(
+    number: str,
+    obj: GH_OBJ_T,
+    object_name: str,
+    updated_at: t.Optional[datetime.datetime] = None,
+) -> GH_OBJ:
+    query = QUERY_SINGLE_ISSUE if object_name == "issue" else QUERY_SINGLE_PR
+    resp = send_query(
+        json.dumps(
+            {
+                "query": query,
+                "variables": {"number": int(number)},
+            }
         )
     )
+    data = resp.json()["data"]
+    logging.info(data["rateLimit"])
+    o = data["repository"][object_name]
+    if o is None:
+        raise ValueError(f"{number} not found")
 
-
-def last_commented_by(obj: GH_OBJ, name: str) -> datetime.datetime:
-    return max(
-        (
-            e["created_at"]
-            for e in obj.events
-            if e["name"] == "IssueComment" and e["author"] == name
-        ),
-        default=None,
+    kwargs = dict(
+        id=o["id"],
+        author=o["author"]["login"] if o["author"] else "ghost",
+        number=o["number"],
+        title=o["title"],
+        body=o["body"],
+        events=process_events(o),
+        labels={node["name"]: node["id"] for node in o["labels"].get("nodes", [])},
+        updated_at=updated_at,
+        components=[],
+        last_triaged=datetime.datetime.now(datetime.timezone.utc),
     )
+    if object_name == "pullRequest":
+        kwargs["branch"] = o["baseRef"]["name"]
+        kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
+
+    return obj(**kwargs)
 
 
 def fetch_object_by_number(number: str) -> GH_OBJ:
@@ -1009,6 +960,54 @@ def fetch_object_by_number(number: str) -> GH_OBJ:
         obj = fetch_object(number, PR, "pullRequest")
 
     return obj
+
+
+def fetch_objects() -> dict[str, GH_OBJ]:
+    with shelve.open(CACHE_FILENAME) as cache:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {
+                executor.submit(get_gh_objects, "issues"): "issues",
+                executor.submit(get_gh_objects, "pullRequests"): "prs",
+            }
+            number_map = collections.defaultdict(list)
+            for future in concurrent.futures.as_completed(futures):
+                issue_type = futures[future]
+                now = datetime.datetime.now(datetime.timezone.utc)
+                number_map[issue_type] = [
+                    (number, updated_at)
+                    for number, updated_at in future.result()
+                    if number not in cache
+                    or cache[str(number)].updated_at < updated_at
+                    or (now - cache[str(number)].last_triaged).days >= STALE_ISSUE_DAYS
+                ]
+
+        if not number_map["issues"] and not number_map["prs"]:
+            return {}
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            futures = []
+            for object_name, obj, data in (
+                ("issue", Issue, number_map["issues"]),
+                ("pullRequest", PR, number_map["prs"]),
+            ):
+                for number, updated_at in data:
+                    futures.append(
+                        executor.submit(
+                            fetch_object,
+                            number,
+                            obj,
+                            object_name,
+                            updated_at,
+                        )
+                    )
+
+            data = {}
+            for future in concurrent.futures.as_completed(futures):
+                obj = future.result()
+                data[str(obj.number)] = obj
+
+            cache.update(data)
+            return data
 
 
 def daemon(dry_run: t.Optional = None) -> None:
