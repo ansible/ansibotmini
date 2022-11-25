@@ -662,23 +662,25 @@ def fetch_objects() -> dict[str, GH_OBJ]:
             return data
 
 
-component_re = re.compile(
+COMPONENT_RE = re.compile(
     r"#{3,5}\scomponent\sname(.+?)(?=#{3,5})", flags=re.IGNORECASE | re.DOTALL
 )
-obj_type_re = re.compile(
+OBJ_TYPE_RE = re.compile(
     r"#{3,5}\sissue\stype(.+?)(?=#{3,5})", flags=re.IGNORECASE | re.DOTALL
 )
-valid_commands = (
+VERSION_RE = re.compile(r"ansible\s\[core\s([^]]+)]")
+COMPONENT_COMMAND_RE = re.compile(
+    r"^(?:@ansibot\s)?!component\s([=+-]\S+)$", flags=re.MULTILINE
+)
+
+VALID_COMMANDS = (
     "bot_skip",
     "bot_broken",
     "needs_info",
     "waiting_on_contributor",
     "!needs_collection_redirect",
 )
-# TODO '/' prefix?
-commands_re = re.compile(f"^{'|'.join(valid_commands)}$", flags=re.MULTILINE)
-component_command_re = re.compile(r"^[!/]component\s([=+-]\S+)$", flags=re.MULTILINE)
-version_re = re.compile(r"ansible\s\[core\s([^]]+)]")
+COMMANDS_RE = re.compile(f"^(?:{'|'.join(VALID_COMMANDS)})$", flags=re.MULTILINE)
 
 
 def process_component(data):
@@ -721,7 +723,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 (e["body"] for e in obj.events if e["name"] == "IssueComment"),
             )
         )
-        commands_found = commands_re.findall(comment_able)
+        commands_found = COMMANDS_RE.findall(comment_able)
 
         # bot_skip/bot_broken
         skip_this = False
@@ -812,7 +814,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         if isinstance(obj, PR):
             components = obj.files
         elif isinstance(obj, Issue):
-            if match := component_re.search(obj.body):
+            if match := COMPONENT_RE.search(obj.body):
                 components = process_component(match.group(1).splitlines())
                 # collections redirect
                 if "!needs_collection_redirect" not in commands_found:
@@ -842,7 +844,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                         close = True
                 components = match_existing_components(components)
 
-        for component_command in component_command_re.findall(comment_able):
+        for component_command in COMPONENT_COMMAND_RE.findall(comment_able):
             path = component_command[1:]
             if component_command.startswith("="):
                 components = [path]
@@ -859,7 +861,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         )
 
         # object type
-        if match := obj_type_re.search(obj.body):
+        if match := OBJ_TYPE_RE.search(obj.body):
             data = re.sub(r"~[^~]+~", "", match.group(1).lower())
             if "feature" in data:
                 to_label.append("feature")
@@ -871,7 +873,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 to_label.append("test")
 
         # version matcher
-        if match := version_re.search(obj.body):
+        if match := VERSION_RE.search(obj.body):
             label_name = f"affects_{'.'.join(match.group(1).split('.')[:2])}"
             if not any(
                 e
@@ -1016,7 +1018,6 @@ def daemon(dry_run: t.Optional = None) -> None:
         start = time.time()
         objs = fetch_objects()
         if objs:
-            # TODO multiprocess?
             triage(objs, dry_run)
             with shelve.open(CACHE_FILENAME) as cache:
                 for number, obj in objs.items():
