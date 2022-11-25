@@ -79,6 +79,12 @@ VALID_COMMANDS = (
 )
 COMMANDS_RE = re.compile(f"^(?:{'|'.join(VALID_COMMANDS)})$", flags=re.MULTILINE)
 
+AZP_BUILD_ID_RE = re.compile(
+    r"https://dev\.azure\.com/(?P<organization>[^/]+)/(?P<project>[^/]+)/_build/results\?buildId=(?P<buildId>[0-9]+)",
+)
+
+RESOLVED_BY_PR_RE = re.compile(r"^resolved_by_pr\s([#0-9]+)$", flags=re.MULTILINE)
+
 HEADERS = {
     "Accept": "application/json",
     "Authorization": f"Bearer {gh_token}",
@@ -678,9 +684,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
             continue
 
         # resolved_by_pr
-        if match := re.search(
-            r"^resolved_by_pr\s([#0-9]+)$", comment_able, re.MULTILINE
-        ):
+        if match := RESOLVED_BY_PR_RE.search(comment_able):
             if get_pr_state(int(match.group(1).removeprefix("#"))).lower() == "merged":
                 close = True
 
@@ -980,12 +984,10 @@ def fetch_object(
         kwargs["branch"] = o["baseRef"]["name"]
         kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
         check_suite = o["commits"]["nodes"][0]["commit"]["checkSuites"]["nodes"][0]
-        build_id = re.search(
-            r"https://dev\.azure\.com/(?P<organization>[^/]+)/(?P<project>[^/]+)/_build/results\?buildId=(?P<buildId>[0-9]+)",
-            check_suite["checkRuns"]["nodes"][0]["detailsUrl"],
-        ).group("buildId")
         kwargs["ci"] = CI(
-            build_id=build_id,
+            build_id=AZP_BUILD_ID_RE.search(
+                check_suite["checkRuns"]["nodes"][0]["detailsUrl"]
+            ).group("buildId"),
             conclusion=check_suite["conclusion"],
             status=check_suite["status"],
             updated_at=datetime.datetime.fromisoformat(check_suite["updatedAt"]),
