@@ -858,6 +858,14 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 to_label.append("stale_ci")
             else:
                 to_unlabel.append("stale_ci")
+            # needs_ci
+            label = "needs_ci"
+            if obj.ci.status.lower() != "completed":
+                if "pre_azp" not in obj.labels:
+                    to_label.append(label)
+            else:
+                to_unlabel.append(label)
+                to_unlabel.append("pre_azp")
 
         # TODO conflicting actions
         if common_labels := set(to_label).intersection(to_unlabel):
