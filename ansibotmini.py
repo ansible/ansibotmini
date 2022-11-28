@@ -47,6 +47,7 @@ ANSIBLE_PLUGINS = [
     "vars",
 ]
 
+STALE_CI_DAYS = 7
 STALE_ISSUE_DAYS = 7
 NEEDS_INFO_WARN_DAYS = 14
 NEEDS_INFO_CLOSE_DAYS = 28
@@ -850,6 +851,13 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                         )
                     ) as f:
                         comments.append(f.read())
+            # stale_ci
+            if (
+                datetime.datetime.now(datetime.timezone.utc) - obj.ci.updated_at
+            ).days > STALE_CI_DAYS:
+                to_label.append("stale_ci")
+            else:
+                to_unlabel.append("stale_ci")
 
         # TODO conflicting actions
         if common_labels := set(to_label).intersection(to_unlabel):
