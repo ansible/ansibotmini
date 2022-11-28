@@ -266,6 +266,15 @@ commits(last: 1) {
     }
   }
 }
+mergeable
+reviews(last: 10) {
+  nodes {
+    author {
+      login
+    }
+    state
+  }
+}
 """,
 )
 
@@ -299,6 +308,8 @@ class Issue:
 class PR(Issue):
     branch: str
     files: list[str]
+    mergeable: str
+    changes_requested: bool
     ci: CI
 
 
@@ -860,12 +871,21 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 to_unlabel.append("stale_ci")
             # needs_ci
             label = "needs_ci"
-            if obj.ci.status.lower() != "completed":
+            if obj.ci.status != "completed":
                 if "pre_azp" not in obj.labels:
                     to_label.append(label)
             else:
                 to_unlabel.append(label)
                 to_unlabel.append("pre_azp")
+            # needs_revision
+            if (
+                obj.mergeable != "mergeable"
+                or obj.changes_requested
+                or obj.ci.conclusion != "success"
+            ):
+                to_label.append("needs_revision")
+            else:
+                to_unlabel.append("needs_revision")
 
         # TODO conflicting actions
         if common_labels := set(to_label).intersection(to_unlabel):
@@ -999,13 +1019,23 @@ def fetch_object(
     if object_name == "pullRequest":
         kwargs["branch"] = o["baseRef"]["name"]
         kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
+        kwargs["mergeable"] = o["mergeable"].lower()
+        reviews = {}
+        for review in reversed(o["reviews"]["nodes"]):
+            state = review["state"].lower()
+            if state not in ("changes_requested", "dismissed"):
+                continue
+            author = review["author"]["login"]
+            if author not in reviews:
+                reviews[author] = state
+        kwargs["changes_requested"] = "changes_requested" in reviews.values()
         check_suite = o["commits"]["nodes"][0]["commit"]["checkSuites"]["nodes"][0]
         kwargs["ci"] = CI(
             build_id=AZP_BUILD_ID_RE.search(
                 check_suite["checkRuns"]["nodes"][0]["detailsUrl"]
             ).group("buildId"),
-            conclusion=check_suite["conclusion"],
-            status=check_suite["status"],
+            conclusion=check_suite["conclusion"].lower(),
+            status=check_suite["status"].lower(),
             updated_at=datetime.datetime.fromisoformat(check_suite["updatedAt"]),
         )
 
