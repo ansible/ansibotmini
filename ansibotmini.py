@@ -9,6 +9,8 @@ import collections
 import concurrent.futures
 import configparser
 import datetime
+import hashlib
+import io
 import itertools
 import json
 import logging
@@ -21,8 +23,11 @@ import time
 import typing as t
 import urllib.parse
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 
+AZP_ARTIFACTS_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s/artifacts?api-version=7.0"
+AZP_TIMELINE_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s/timeline/?api-version=7.0"
 GALAXY_URL = "https://galaxy.ansible.com/"
 
 COLLECTIONS_LIST_ENDPOINT = "https://sivel.eng.ansible.com/api/v1/collections/list"
@@ -283,11 +288,10 @@ reviews(last: 10) {
 class Response:
     status_code: int
     reason: str
-    text: str
-    ok: bool
+    raw_data: bytes
 
     def json(self) -> t.Any:
-        return json.loads(self.text)
+        return json.loads(self.raw_data.decode())
 
 
 @dataclass
@@ -332,7 +336,6 @@ def http_request(
     data: str = "",
     headers: t.Optional[t.MutableMapping[str, str]] = None,
     method: str = "GET",
-    encoding: str = "utf-8",
 ) -> Response:
     global request_counter
     if headers is None:
@@ -350,8 +353,7 @@ def http_request(
         return Response(
             status_code=response.status,
             reason=response.reason,
-            text=response.read().decode(encoding),
-            ok=response.status == 200,
+            raw_data=response.read(),
         )
 
 
@@ -886,6 +888,57 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 to_label.append("needs_revision")
             else:
                 to_unlabel.append("needs_revision")
+            # ci comments
+            failed_job_ids = [
+                r["id"]
+                for r in http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id).json()[
+                    "records"
+                ]
+                if r["type"] == "Job" and r["result"] == "failed"
+            ]
+            ci_comment = []
+            ci_verifieds = []
+            for url in (
+                a["resource"]["downloadUrl"]
+                for a in http_request(AZP_ARTIFACTS_URL_FMT % obj.ci.build_id).json()[
+                    "value"
+                ]
+                if a["name"].startswith("Bot ") and a["source"] in failed_job_ids
+            ):
+                zfile = zipfile.ZipFile(io.BytesIO(http_request(url).raw_data))
+                for filename in zfile.namelist():
+                    if "ansible-test-" not in filename:
+                        continue
+                    with zfile.open(filename) as f:
+                        artifact_data = json.load(f)
+                        ci_verifieds.append(artifact_data["verified"])
+                        for r in artifact_data["results"]:
+                            ci_comment.append(
+                                f"{r['message']}\n```\n{r['output']}\n```\n"
+                            )
+            if ci_comment:
+                results = "\n".join(ci_comment)
+                r_hash = hashlib.md5(results.encode()).hexdigest()
+                if not any(
+                    e
+                    for e in obj.events
+                    if e["name"] == "IssueComment"
+                    and e["author"] == "ansibot"
+                    and "<!--- boilerplate: ci_test_result --->" in e["body"]
+                    and f"<!-- r_hash: {r_hash} -->" in e["body"]
+                ):
+                    with open(get_template_path("ci_test_results")) as f:
+                        comments.append(
+                            string.Template(f.read()).substitute(
+                                results=results,
+                                r_hash=r_hash,
+                            )
+                        )
+            # ci_verified
+            if all(ci_verifieds) and len(ci_verifieds) == len(failed_job_ids):
+                to_label.append("ci_verified")
+            else:
+                to_unlabel.append("ci_verified")
 
         # TODO conflicting actions
         if common_labels := set(to_label).intersection(to_unlabel):
