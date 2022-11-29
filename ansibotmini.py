@@ -26,6 +26,14 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 
+minimal_required_python_version = (3, 11)
+if sys.version_info < minimal_required_python_version:
+    raise SystemExit(
+        f"ansibotmini requires Python {'.'.join((str(e) for e in minimal_required_python_version))} or newer. "
+        f"Python version detected: {sys.version.split(' ')[0]}"
+    )
+
+
 AZP_ARTIFACTS_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s/artifacts?api-version=7.0"
 AZP_TIMELINE_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s/timeline/?api-version=7.0"
 GALAXY_URL = "https://galaxy.ansible.com/"
