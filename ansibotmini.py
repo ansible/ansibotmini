@@ -947,6 +947,13 @@ def backport(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> N
         actions["to_unlabel"].append("backport")
 
 
+def is_module(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    if any(c.startswith("lib/ansible/modules/") for c in obj.components):
+        actions["to_label"].append("module")
+    else:
+        actions["to_unlabel"].append("module")
+
+
 bot_funcs = [
     commands,  # order matters
     match_components,  # order matters
@@ -961,6 +968,7 @@ bot_funcs = [
     stale_ci,
     docs_only,
     backport,
+    is_module,
 ]
 
 
