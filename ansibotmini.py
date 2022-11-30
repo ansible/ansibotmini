@@ -262,6 +262,7 @@ files(first: 50) {
 commits(last: 1) {
   nodes {
     commit {
+      pushedDate
       checkSuites(last: 1) {
         nodes {
           checkRuns(last: 1) {
@@ -281,12 +282,13 @@ commits(last: 1) {
   }
 }
 mergeable
-reviews(last: 10) {
+reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, DISMISSED]) {
   nodes {
     author {
       login
     }
     state
+    updatedAt
   }
 }
 """,
@@ -323,6 +325,8 @@ class PR(Issue):
     files: list[str]
     mergeable: str
     changes_requested: bool
+    last_review: datetime.datetime
+    last_commit: datetime.datetime
     ci: CI
 
 
@@ -943,6 +947,15 @@ def needs_rebase(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) 
         actions["to_unlabel"].append("needs_rebase")
 
 
+def stale_review(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    if not isinstance(obj, PR):
+        return
+    if obj.last_review < obj.last_commit:
+        actions["to_label"].append("stale_review")
+    else:
+        actions["to_unlabel"].append("stale_review")
+
+
 bot_funcs = [
     commands,  # order matters
     match_components,  # order matters
@@ -959,6 +972,7 @@ bot_funcs = [
     backport,
     is_module,
     needs_rebase,
+    stale_review,
 ]
 
 
@@ -1136,6 +1150,16 @@ def fetch_object(
             if author not in reviews:
                 reviews[author] = state
         kwargs["changes_requested"] = "changes_requested" in reviews.values()
+        kwargs["last_review"] = max(
+            (r["updatedAt"] for r in o["reviews"]["nodes"]), default=None
+        )
+        if kwargs["last_review"]:
+            kwargs["last_review"] = datetime.datetime.fromisoformat(
+                kwargs["last_review"]
+            )
+        kwargs["last_commit"] = datetime.datetime.fromisoformat(
+            o["commits"]["nodes"][0]["commit"]["pushedDate"]
+        )
         check_suite = o["commits"]["nodes"][0]["commit"]["checkSuites"]["nodes"][0]
         kwargs["ci"] = CI(
             build_id=AZP_BUILD_ID_RE.search(
