@@ -954,6 +954,15 @@ def is_module(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> 
         actions["to_unlabel"].append("module")
 
 
+def needs_rebase(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    if not isinstance(obj, PR):
+        return
+    if obj.mergeable == "conflicting":
+        actions["to_label"].append("needs_rebase")
+    else:
+        actions["to_unlabel"].append("needs_rebase")
+
+
 bot_funcs = [
     commands,  # order matters
     match_components,  # order matters
@@ -969,6 +978,7 @@ bot_funcs = [
     docs_only,
     backport,
     is_module,
+    needs_rebase,
 ]
 
 
