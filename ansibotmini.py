@@ -15,6 +15,7 @@ import itertools
 import json
 import logging
 import os.path
+import pprint
 import re
 import shelve
 import string
@@ -673,30 +674,318 @@ def last_commented_by(obj: GH_OBJ, name: str) -> datetime.datetime:
     )
 
 
-def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
-    valid_collections = http_request(COLLECTIONS_LIST_ENDPOINT).json()
-    committers = get_committers()
-    for obj in objects.values():
-        to_label = []
-        to_unlabel = []
-        comments = []
-        close = False
-        logging.info(f"Triaging {obj.__class__.__name__} {obj.title} (#{obj.number})")
+def commands(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    # resolved_by_pr
+    if match := RESOLVED_BY_PR_RE.search(ctx["comment_able"]):
+        if get_pr_state(int(match.group(1).removeprefix("#"))).lower() == "merged":
+            actions["close"] = True
 
-        # commands
+    # label commands
+    for command in ("needs_info", "waiting_on_contributor"):
+        if command in ctx["commands_found"]:
+            actions["to_label"].append(command)
+
+
+def match_components(
+    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
+) -> None:
+    components = []
+    if isinstance(obj, PR):
+        components = obj.files
+    elif isinstance(obj, Issue):
+        if match := COMPONENT_RE.search(obj.body):
+            components = process_component(match.group(1).splitlines())
+            # collections redirect
+            if "!needs_collection_redirect" not in ctx["commands_found"]:
+                if components_from_collections := list(
+                    filter(
+                        lambda x: len(x.split(".")) == 3
+                        and ".".join(x.split(".")[:2]) in ctx["valid_collections"],
+                        components,
+                    ),
+                ):
+                    entries = []
+                    for component in components_from_collections:
+                        fqcn = ".".join(component.split(".")[:2])
+                        repo = ctx["valid_collections"][fqcn]["manifest"][
+                            "collection_info"
+                        ]["repository"]
+                        galaxy_url = GALAXY_URL + fqcn.replace(".", "/")
+                        entries.append(f"* {component} -> {repo} ({galaxy_url})")
+
+                    with open(get_template_path("collection_redirect")) as f:
+                        actions["comments"].append(
+                            string.Template(f.read()).substitute(
+                                components="\n".join(entries)
+                            )
+                        )
+                    actions["to_label"].append("bot_closed")
+                    actions["close"] = True
+            components = match_existing_components(components)
+
+    for component_command in COMPONENT_COMMAND_RE.findall(ctx["comment_able"]):
+        path = component_command[1:]
+        if component_command.startswith("="):
+            components = [path]
+        elif component_command.startswith("+"):
+            components.append(path)
+        elif component_command.startswith("-"):
+            if path in components:
+                components.remove(path)
+
+    obj.components = components
+
+    logging.info(
+        f"{obj.__class__.__name__} #{obj.number}: identified components: {', '.join(obj.components)}"
+    )
+
+
+def needs_triage(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    if not any(
+        e
+        for e in obj.events
+        if e["name"] == "LabeledEvent" and e["label"] == "needs_triage"
+    ):
+        actions["to_label"].append("needs_triage")
+
+
+def waiting_on_contributor(
+    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
+) -> None:
+    if (
+        "waiting_on_contributor" in obj.labels
+        and (
+            datetime.datetime.now(datetime.timezone.utc)
+            - last_labeled(obj, "waiting_on_contributor")
+        ).days
+        > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
+    ):
+        actions["close"] = True
+        actions["to_label"].append("bot_closed")
+        actions["to_unlabel"].append("waiting_on_contributor")
+        with open(get_template_path("waiting_on_contributor")) as f:
+            actions["comments"].append(f.read())
+
+
+def needs_info(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    if "needs_info" in obj.labels:
+        labeled_datetime = last_labeled(obj, "needs_info")
+        commented_datetime = last_commented_by(obj, obj.author)
+        if commented_datetime is None or labeled_datetime > commented_datetime:
+            days_since = (
+                datetime.datetime.now(datetime.timezone.utc) - labeled_datetime
+            ).days
+            if days_since > NEEDS_INFO_CLOSE_DAYS:
+                actions["close"] = True
+                with open(get_template_path("needs_info_close")) as f:
+                    actions["comments"].append(
+                        string.Template(f.read()).substitute(
+                            author=obj.author, object_type=obj.__class__.__name__
+                        )
+                    )
+            elif days_since > NEEDS_INFO_WARN_DAYS:
+                last_warned = max(
+                    [
+                        e["created_at"]
+                        for e in obj.events
+                        if e["name"] == "IssueComment"
+                        and "<!--- boilerplate: needs_info_warn --->" in e["body"]
+                    ],
+                    default=None,
+                )
+                if last_warned is None or last_warned < labeled_datetime:
+                    with open(get_template_path("needs_info_warn")) as f:
+                        actions["comments"].append(
+                            string.Template(f.read()).substitute(
+                                author=obj.author,
+                                object_type=obj.__class__.__name__,
+                            )
+                        )
+        else:
+            actions["to_unlabel"].append("needs_info")
+
+
+def match_object_type(
+    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
+) -> None:
+    if match := OBJ_TYPE_RE.search(obj.body):
+        data = re.sub(r"~[^~]+~", "", match.group(1).lower())
+        if "feature" in data:
+            actions["to_label"].append("feature")
+        if "bug" in data:
+            actions["to_label"].append("bug")
+        if "documentation" in data or "docs" in data:
+            actions["to_label"].append("docs")
+        if "test" in data:
+            actions["to_label"].append("test")
+
+
+def match_version(
+    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
+) -> None:
+    if match := VERSION_RE.search(obj.body):
+        label_name = f"affects_{'.'.join(match.group(1).split('.')[:2])}"
+        if not any(
+            e
+            for e in obj.events
+            if e["name"] == "UnlabeledEvent"
+            and e["author"] in ctx["committers"]
+            and e["label"] == label_name
+        ):
+            actions["to_label"].append(label_name)
+
+
+def ci_comments(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    if not isinstance(obj, PR):
+        return
+
+    failed_job_ids = [
+        r["id"]
+        for r in http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id).json()["records"]
+        if r["type"] == "Job" and r["result"] == "failed"
+    ]
+    ci_comment = []
+    ci_verifieds = []
+    for url in (
+        a["resource"]["downloadUrl"]
+        for a in http_request(AZP_ARTIFACTS_URL_FMT % obj.ci.build_id).json()["value"]
+        if a["name"].startswith("Bot ") and a["source"] in failed_job_ids
+    ):
+        zfile = zipfile.ZipFile(io.BytesIO(http_request(url).raw_data))
+        for filename in zfile.namelist():
+            if "ansible-test-" not in filename:
+                continue
+            with zfile.open(filename) as f:
+                artifact_data = json.load(f)
+                ci_verifieds.append(artifact_data["verified"])
+                for r in artifact_data["results"]:
+                    ci_comment.append(f"{r['message']}\n```\n{r['output']}\n```\n")
+    if ci_comment:
+        results = "\n".join(ci_comment)
+        r_hash = hashlib.md5(results.encode()).hexdigest()
+        if not any(
+            e
+            for e in obj.events
+            if e["name"] == "IssueComment"
+            and e["author"] == "ansibot"
+            and "<!--- boilerplate: ci_test_result --->" in e["body"]
+            and f"<!-- r_hash: {r_hash} -->" in e["body"]
+        ):
+            with open(get_template_path("ci_test_results")) as f:
+                actions["comments"].append(
+                    string.Template(f.read()).substitute(
+                        results=results,
+                        r_hash=r_hash,
+                    )
+                )
+    # ci_verified
+    if all(ci_verifieds) and len(ci_verifieds) == len(failed_job_ids):
+        actions["to_label"].append("ci_verified")
+    else:
+        actions["to_unlabel"].append("ci_verified")
+
+
+def needs_revision(
+    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
+) -> None:
+    if not isinstance(obj, PR):
+        return
+    if (
+        obj.mergeable != "mergeable"
+        or obj.changes_requested
+        or obj.ci.conclusion != "success"
+    ):
+        actions["to_label"].append("needs_revision")
+    else:
+        actions["to_unlabel"].append("needs_revision")
+
+
+def needs_ci(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    if not isinstance(obj, PR):
+        return
+    label = "needs_ci"
+    if obj.ci.status != "completed":
+        if "pre_azp" not in obj.labels:
+            actions["to_label"].append(label)
+    else:
+        actions["to_unlabel"].append(label)
+        actions["to_unlabel"].append("pre_azp")
+
+
+def stale_ci(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    if not isinstance(obj, PR):
+        return
+    if (
+        datetime.datetime.now(datetime.timezone.utc) - obj.ci.updated_at
+    ).days > STALE_CI_DAYS:
+        actions["to_label"].append("stale_ci")
+    else:
+        actions["to_unlabel"].append("stale_ci")
+
+
+def docs_only(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    if not isinstance(obj, PR):
+        return
+    if all(c.startswith("docs/") for c in obj.components):
+        actions["to_label"].append("docs_only")
+        if not any(
+            e
+            for e in obj.events
+            if e["name"] == "IssueComment"
+            and "<!--- boilerplate: docs_only --->" in e["body"]
+        ):
+            with open(
+                os.path.join(os.path.dirname(__file__), "templates/docs_only.tmpl")
+            ) as f:
+                actions["comments"].append(f.read())
+
+
+def backport(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    if not isinstance(obj, PR):
+        return
+    if obj.branch.startswith("stable-"):
+        actions["to_label"].append("backport")
+    else:
+        actions["to_unlabel"].append("backport")
+
+
+bot_funcs = [
+    commands,  # order matters
+    match_components,  # order matters
+    needs_triage,
+    waiting_on_contributor,
+    needs_info,
+    match_object_type,
+    match_version,
+    ci_comments,
+    needs_revision,
+    needs_ci,
+    stale_ci,
+    docs_only,
+    backport,
+]
+
+
+def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
+    ctx = {
+        "valid_collections": http_request(COLLECTIONS_LIST_ENDPOINT).json(),
+        "committers": get_committers(),
+    }
+    for obj in objects.values():
+        logging.info(f"Triaging {obj.__class__.__name__} {obj.title} (#{obj.number})")
+        actions = {"to_label": [], "to_unlabel": [], "comments": [], "close": False}
         # TODO negate commands
-        comment_able = "\n".join(
+        ctx["comment_able"] = "\n".join(
             itertools.chain(
                 (obj.body,),
                 (e["body"] for e in obj.events if e["name"] == "IssueComment"),
             )
         )
-        commands_found = COMMANDS_RE.findall(comment_able)
+        ctx["commands_found"] = COMMANDS_RE.findall(ctx["comment_able"])
 
-        # bot_skip/bot_broken
         skip_this = False
         for command in ("bot_skip", "bot_broken"):
-            if command in commands_found:
+            if command in ctx["commands_found"]:
                 logging.info(
                     f"Skipping {obj.__class__.__name__} {obj.title} (#{obj.number}) due to {command}"
                 )
@@ -705,270 +994,29 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         if skip_this:
             continue
 
-        # resolved_by_pr
-        if match := RESOLVED_BY_PR_RE.search(comment_able):
-            if get_pr_state(int(match.group(1).removeprefix("#"))).lower() == "merged":
-                close = True
-
-        # label commands
-        for command in ("needs_info", "waiting_on_contributor"):
-            if command in commands_found:
-                to_label.append(command)
-
-        # needs_triage
-        if not any(
-            e
-            for e in obj.events
-            if e["name"] == "LabeledEvent" and e["label"] == "needs_triage"
-        ):
-            to_label.append("needs_triage")
-
-        # waiting_on_contributor
-        if (
-            "waiting_on_contributor" in obj.labels
-            and (
-                datetime.datetime.now(datetime.timezone.utc)
-                - last_labeled(obj, "waiting_on_contributor")
-            ).days
-            > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
-        ):
-            close = True
-            to_label.append("bot_closed")
-            to_unlabel.append("waiting_on_contributor")
-            with open(get_template_path("waiting_on_contributor")) as f:
-                comments.append(f.read())
-
-        # needs_info
-        if "needs_info" in obj.labels:
-            labeled_datetime = last_labeled(obj, "needs_info")
-            commented_datetime = last_commented_by(obj, obj.author)
-            if commented_datetime is None or labeled_datetime > commented_datetime:
-                days_since = (
-                    datetime.datetime.now(datetime.timezone.utc) - labeled_datetime
-                ).days
-                if days_since > NEEDS_INFO_CLOSE_DAYS:
-                    close = True
-                    with open(get_template_path("needs_info_close")) as f:
-                        comments.append(
-                            string.Template(f.read()).substitute(
-                                author=obj.author, object_type=obj.__class__.__name__
-                            )
-                        )
-                elif days_since > NEEDS_INFO_WARN_DAYS:
-                    last_warned = max(
-                        [
-                            e["created_at"]
-                            for e in obj.events
-                            if e["name"] == "IssueComment"
-                            and "<!--- boilerplate: needs_info_warn --->" in e["body"]
-                        ],
-                        default=None,
-                    )
-                    if last_warned is None or last_warned < labeled_datetime:
-                        with open(get_template_path("needs_info_warn")) as f:
-                            comments.append(
-                                string.Template(f.read()).substitute(
-                                    author=obj.author,
-                                    object_type=obj.__class__.__name__,
-                                )
-                            )
-            else:
-                to_unlabel.append("needs_info")
-
-        # components
-        components = []
-        if isinstance(obj, PR):
-            components = obj.files
-        elif isinstance(obj, Issue):
-            if match := COMPONENT_RE.search(obj.body):
-                components = process_component(match.group(1).splitlines())
-                # collections redirect
-                if "!needs_collection_redirect" not in commands_found:
-                    if components_from_collections := list(
-                        filter(
-                            lambda x: len(x.split(".")) == 3
-                            and ".".join(x.split(".")[:2]) in valid_collections,
-                            components,
-                        ),
-                    ):
-                        entries = []
-                        for component in components_from_collections:
-                            fqcn = ".".join(component.split(".")[:2])
-                            repo = valid_collections[fqcn]["manifest"][
-                                "collection_info"
-                            ]["repository"]
-                            galaxy_url = GALAXY_URL + fqcn.replace(".", "/")
-                            entries.append(f"* {component} -> {repo} ({galaxy_url})")
-
-                        with open(get_template_path("collection_redirect")) as f:
-                            comments.append(
-                                string.Template(f.read()).substitute(
-                                    components="\n".join(entries)
-                                )
-                            )
-                        to_label.append("bot_closed")
-                        close = True
-                components = match_existing_components(components)
-
-        for component_command in COMPONENT_COMMAND_RE.findall(comment_able):
-            path = component_command[1:]
-            if component_command.startswith("="):
-                components = [path]
-            elif component_command.startswith("+"):
-                components.append(path)
-            elif component_command.startswith("-"):
-                if path in components:
-                    components.remove(path)
-
-        obj.components = components
-
-        logging.info(
-            f"{obj.__class__.__name__} #{obj.number}: indentified components: {', '.join(obj.components)}"
-        )
-
-        # object type
-        if match := OBJ_TYPE_RE.search(obj.body):
-            data = re.sub(r"~[^~]+~", "", match.group(1).lower())
-            if "feature" in data:
-                to_label.append("feature")
-            if "bug" in data:
-                to_label.append("bug")
-            if "documentation" in data or "docs" in data:
-                to_label.append("docs")
-            if "test" in data:
-                to_label.append("test")
-
-        # version matcher
-        if match := VERSION_RE.search(obj.body):
-            label_name = f"affects_{'.'.join(match.group(1).split('.')[:2])}"
-            if not any(
-                e
-                for e in obj.events
-                if e["name"] == "UnlabeledEvent"
-                and e["author"] in committers
-                and e["label"] == label_name
-            ):
-                to_label.append(label_name)
-
-        # PRs
-        if isinstance(obj, PR):
-            # backport
-            if obj.branch.startswith("stable-"):
-                to_label.append("backport")
-            else:
-                to_unlabel.append("backport")
-            # docs only
-            if all(c.startswith("docs/") for c in components):
-                to_label.append("docs_only")
-                if not any(
-                    e
-                    for e in obj.events
-                    if e["name"] == "IssueComment"
-                    and "<!--- boilerplate: docs_only --->" in e["body"]
-                ):
-                    with open(
-                        os.path.join(
-                            os.path.dirname(__file__), "templates/docs_only.tmpl"
-                        )
-                    ) as f:
-                        comments.append(f.read())
-            # stale_ci
-            if (
-                datetime.datetime.now(datetime.timezone.utc) - obj.ci.updated_at
-            ).days > STALE_CI_DAYS:
-                to_label.append("stale_ci")
-            else:
-                to_unlabel.append("stale_ci")
-            # needs_ci
-            label = "needs_ci"
-            if obj.ci.status != "completed":
-                if "pre_azp" not in obj.labels:
-                    to_label.append(label)
-            else:
-                to_unlabel.append(label)
-                to_unlabel.append("pre_azp")
-            # needs_revision
-            if (
-                obj.mergeable != "mergeable"
-                or obj.changes_requested
-                or obj.ci.conclusion != "success"
-            ):
-                to_label.append("needs_revision")
-            else:
-                to_unlabel.append("needs_revision")
-            # ci comments
-            failed_job_ids = [
-                r["id"]
-                for r in http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id).json()[
-                    "records"
-                ]
-                if r["type"] == "Job" and r["result"] == "failed"
-            ]
-            ci_comment = []
-            ci_verifieds = []
-            for url in (
-                a["resource"]["downloadUrl"]
-                for a in http_request(AZP_ARTIFACTS_URL_FMT % obj.ci.build_id).json()[
-                    "value"
-                ]
-                if a["name"].startswith("Bot ") and a["source"] in failed_job_ids
-            ):
-                zfile = zipfile.ZipFile(io.BytesIO(http_request(url).raw_data))
-                for filename in zfile.namelist():
-                    if "ansible-test-" not in filename:
-                        continue
-                    with zfile.open(filename) as f:
-                        artifact_data = json.load(f)
-                        ci_verifieds.append(artifact_data["verified"])
-                        for r in artifact_data["results"]:
-                            ci_comment.append(
-                                f"{r['message']}\n```\n{r['output']}\n```\n"
-                            )
-            if ci_comment:
-                results = "\n".join(ci_comment)
-                r_hash = hashlib.md5(results.encode()).hexdigest()
-                if not any(
-                    e
-                    for e in obj.events
-                    if e["name"] == "IssueComment"
-                    and e["author"] == "ansibot"
-                    and "<!--- boilerplate: ci_test_result --->" in e["body"]
-                    and f"<!-- r_hash: {r_hash} -->" in e["body"]
-                ):
-                    with open(get_template_path("ci_test_results")) as f:
-                        comments.append(
-                            string.Template(f.read()).substitute(
-                                results=results,
-                                r_hash=r_hash,
-                            )
-                        )
-            # ci_verified
-            if all(ci_verifieds) and len(ci_verifieds) == len(failed_job_ids):
-                to_label.append("ci_verified")
-            else:
-                to_unlabel.append("ci_verified")
+        for f in bot_funcs:
+            f(obj, actions, ctx)
 
         # TODO conflicting actions
-        if common_labels := set(to_label).intersection(to_unlabel):
+        if common_labels := set(actions["to_label"]).intersection(
+            actions["to_unlabel"]
+        ):
             raise AssertionError(
                 f"The following labels were scheduled to be both added and removed {', '.join(common_labels)}"
             )
 
         if dry_run:
-            logging.info(f"add labels: {', '.join(to_label)}")
-            logging.info(f"remove labels: {', '.join(to_unlabel)}")
-            logging.info(f"comments: {', '.join(comments)}")
-            logging.info(f"close: {close}")
+            pprint.pprint(actions)
         else:
-            if to_label:
-                add_labels(obj, to_label)
-            if to_unlabel:
-                remove_labels(obj, to_unlabel)
+            if actions["to_label"]:
+                add_labels(obj, actions["to_label"])
+            if actions["to_unlabel"]:
+                remove_labels(obj, actions["to_unlabel"])
 
-            for comment in comments:
+            for comment in actions["comments"]:
                 add_comment(obj, comment)
 
-            if close:
+            if actions["close"]:
                 close_object(obj)
 
         logging.info(
