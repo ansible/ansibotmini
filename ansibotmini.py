@@ -674,6 +674,10 @@ def last_commented_by(obj: GH_OBJ, name: str) -> datetime.datetime:
     )
 
 
+def days_since(when: datetime.datetime) -> int:
+    return (datetime.datetime.now(datetime.timezone.utc) - when).days
+
+
 def commands(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
     # resolved_by_pr
     if match := RESOLVED_BY_PR_RE.search(ctx["comment_able"]):
@@ -754,10 +758,7 @@ def waiting_on_contributor(
 ) -> None:
     if (
         "waiting_on_contributor" in obj.labels
-        and (
-            datetime.datetime.now(datetime.timezone.utc)
-            - last_labeled(obj, "waiting_on_contributor")
-        ).days
+        and days_since(last_labeled(obj, "waiting_on_contributor"))
         > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
     ):
         actions["close"] = True
@@ -772,10 +773,8 @@ def needs_info(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) ->
         labeled_datetime = last_labeled(obj, "needs_info")
         commented_datetime = last_commented_by(obj, obj.author)
         if commented_datetime is None or labeled_datetime > commented_datetime:
-            days_since = (
-                datetime.datetime.now(datetime.timezone.utc) - labeled_datetime
-            ).days
-            if days_since > NEEDS_INFO_CLOSE_DAYS:
+            days_labeled = days_since(labeled_datetime)
+            if days_labeled > NEEDS_INFO_CLOSE_DAYS:
                 actions["close"] = True
                 with open(get_template_path("needs_info_close")) as f:
                     actions["comments"].append(
@@ -783,7 +782,7 @@ def needs_info(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) ->
                             author=obj.author, object_type=obj.__class__.__name__
                         )
                     )
-            elif days_since > NEEDS_INFO_WARN_DAYS:
+            elif days_labeled > NEEDS_INFO_WARN_DAYS:
                 last_warned = max(
                     [
                         e["created_at"]
@@ -915,9 +914,7 @@ def needs_ci(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> N
 def stale_ci(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR):
         return
-    if (
-        datetime.datetime.now(datetime.timezone.utc) - obj.ci.updated_at
-    ).days > STALE_CI_DAYS:
+    if days_since(obj.ci.updated_at) > STALE_CI_DAYS:
         actions["to_label"].append("stale_ci")
     else:
         actions["to_unlabel"].append("stale_ci")
@@ -1170,13 +1167,12 @@ def fetch_objects() -> dict[str, GH_OBJ]:
             number_map = collections.defaultdict(list)
             for future in concurrent.futures.as_completed(futures):
                 issue_type = futures[future]
-                now = datetime.datetime.now(datetime.timezone.utc)
                 number_map[issue_type] = [
                     (number, updated_at)
                     for number, updated_at in future.result()
                     if number not in cache
                     or cache[str(number)].updated_at < updated_at
-                    or (now - cache[str(number)].last_triaged).days >= STALE_ISSUE_DAYS
+                    or days_since(cache[str(number)].last_triaged) >= STALE_ISSUE_DAYS
                 ]
 
         if not number_map["issues"] and not number_map["prs"]:
