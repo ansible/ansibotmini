@@ -400,16 +400,6 @@ def get_label_id(name: str) -> str:
 
 def add_labels(obj: GH_OBJ, labels: list[str]) -> None:
     # TODO gather label IDs globally from processed issues to limit API calls to get IDs
-    label_id_to_name_map = {
-        get_label_id(label): label for label in labels if label not in obj.labels
-    }
-    if not label_id_to_name_map:
-        return
-
-    logging.info(
-        f"{obj.__class__.__name__} #{obj.number}: adding {', '.join(label_id_to_name_map.values())} labels"
-    )
-
     query = """
     mutation($input: AddLabelsToLabelableInput!) {
       addLabelsToLabelable(input:$input) {
@@ -423,7 +413,7 @@ def add_labels(obj: GH_OBJ, labels: list[str]) -> None:
                 "query": query,
                 "variables": {
                     "input": {
-                        "labelIds": list(label_id_to_name_map.keys()),
+                        "labelIds": [get_label_id(label) for label in labels],
                         "labelableId": obj.id,
                     },
                 },
@@ -433,15 +423,6 @@ def add_labels(obj: GH_OBJ, labels: list[str]) -> None:
 
 
 def remove_labels(obj: GH_OBJ, labels: list[str]) -> None:
-    label_id_to_name_map = {
-        obj.labels[label]: label for label in labels if label in obj.labels
-    }
-    if not label_id_to_name_map:
-        return
-
-    logging.info(
-        f"{obj.__class__.__name__} #{obj.number}: removing {', '.join(label_id_to_name_map.values())} labels"
-    )
     query = """
     mutation($input: RemoveLabelsFromLabelableInput!) {
       removeLabelsFromLabelable(input:$input) {
@@ -455,7 +436,7 @@ def remove_labels(obj: GH_OBJ, labels: list[str]) -> None:
                 "query": query,
                 "variables": {
                     "input": {
-                        "labelIds": list(label_id_to_name_map.keys()),
+                        "labelIds": [obj.labels[label] for label in labels],
                         "labelableId": obj.id,
                     },
                 },
@@ -465,7 +446,6 @@ def remove_labels(obj: GH_OBJ, labels: list[str]) -> None:
 
 
 def add_comment(obj: GH_OBJ, body: str) -> None:
-    logging.info(f"{obj.__class__.__name__} #{obj.number}: adding a comment: '{body}'")
     query = """
     mutation($input: AddCommentInput!) {
       addComment(input:$input) {
@@ -1013,7 +993,10 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         for f in bot_funcs:
             f(obj, actions, ctx)
 
-        # TODO conflicting actions
+        logging.debug(pprint.pformat(actions))
+        actions["to_label"] = [l for l in actions["to_label"] if l not in obj.labels]
+        actions["to_unlabel"] = [l for l in actions["to_unlabel"] if l in obj.labels]
+
         if common_labels := set(actions["to_label"]).intersection(
             actions["to_unlabel"]
         ):
@@ -1021,9 +1004,8 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 f"The following labels were scheduled to be both added and removed {', '.join(common_labels)}"
             )
 
-        if dry_run:
-            pprint.pprint(actions)
-        else:
+        logging.info(pprint.pformat(actions))
+        if not dry_run:
             if actions["to_label"]:
                 add_labels(obj, actions["to_label"])
             if actions["to_unlabel"]:
