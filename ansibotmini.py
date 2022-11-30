@@ -837,12 +837,13 @@ def match_version(
 def ci_comments(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR):
         return
-
     failed_job_ids = [
         r["id"]
         for r in http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id).json()["records"]
         if r["type"] == "Job" and r["result"] == "failed"
     ]
+    if not failed_job_ids:
+        return
     ci_comment = []
     ci_verifieds = []
     for url in (
