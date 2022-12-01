@@ -22,6 +22,7 @@ import string
 import sys
 import time
 import typing as t
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -354,19 +355,26 @@ def http_request(
     if headers is None:
         headers = {}
 
-    with urllib.request.urlopen(
-        urllib.request.Request(
-            url, data=data.encode("ascii"), headers=headers, method=method.upper()
-        ),
-    ) as response:
-        request_counter += 1
-        logging.info(
-            f"http request no. {request_counter}: {method} {url}: {response.status}, {response.reason}"
-        )
+    try:
+        with urllib.request.urlopen(
+            urllib.request.Request(
+                url, data=data.encode("ascii"), headers=headers, method=method.upper()
+            ),
+        ) as response:
+            request_counter += 1
+            logging.info(
+                f"http request no. {request_counter}: {method} {url}: {response.status}, {response.reason}"
+            )
+            return Response(
+                status_code=response.status,
+                reason=response.reason,
+                raw_data=response.read(),
+            )
+    except urllib.error.HTTPError as e:
         return Response(
-            status_code=response.status,
-            reason=response.reason,
-            raw_data=response.read(),
+            status_code=e.status,
+            reason=e.reason,
+            raw_data=b"",
         )
 
 
@@ -821,9 +829,13 @@ def match_version(
 def ci_comments(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR) or obj.ci is None:
         return
+    resp = http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id)
+    if resp.status_code == 404:
+        # not available anymore
+        return
     failed_job_ids = [
         r["id"]
-        for r in http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id).json()["records"]
+        for r in resp.json()["records"]
         if r["type"] == "Job" and r["result"] == "failed"
     ]
     if not failed_job_ids:
