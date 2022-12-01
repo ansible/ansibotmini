@@ -961,7 +961,7 @@ def needs_rebase(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) 
 
 
 def stale_review(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
-    if not isinstance(obj, PR):
+    if not isinstance(obj, PR) or obj.last_review is None:
         return
     if obj.last_review < obj.last_commit:
         actions["to_label"].append("stale_review")
