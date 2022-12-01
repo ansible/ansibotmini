@@ -910,9 +910,9 @@ def needs_ci(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> N
 
 
 def stale_ci(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
-    if not isinstance(obj, PR):
+    if not isinstance(obj, PR) or obj.ci is None:
         return
-    if obj.ci is None or days_since(obj.ci.updated_at) > STALE_CI_DAYS:
+    if days_since(obj.ci.updated_at) > STALE_CI_DAYS:
         actions["to_label"].append("stale_ci")
     else:
         actions["to_unlabel"].append("stale_ci")
