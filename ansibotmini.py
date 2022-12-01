@@ -1175,11 +1175,14 @@ def fetch_object(
         )
         if check_suite := o["commits"]["nodes"][0]["commit"]["checkSuites"]["nodes"]:
             check_suite = check_suite[0]
+            conclusion = check_suite["conclusion"]
+            if conclusion is not None:
+                conclusion = conclusion.lower()
             kwargs["ci"] = CI(
                 build_id=AZP_BUILD_ID_RE.search(
                     check_suite["checkRuns"]["nodes"][0]["detailsUrl"]
                 ).group("buildId"),
-                conclusion=check_suite["conclusion"].lower(),
+                conclusion=conclusion,
                 status=check_suite["status"].lower(),
                 updated_at=datetime.datetime.fromisoformat(check_suite["updatedAt"]),
             )
