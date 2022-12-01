@@ -740,7 +740,7 @@ def needs_triage(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) 
     if not any(
         e
         for e in obj.events
-        if e["name"] == "LabeledEvent" and e["label"] == "needs_triage"
+        if e["name"] == "LabeledEvent" and e["label"] in ("needs_triage", "triage")
     ):
         actions["to_label"].append("needs_triage")
 
