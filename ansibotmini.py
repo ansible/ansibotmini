@@ -327,7 +327,7 @@ class PR(Issue):
     changes_requested: bool
     last_review: datetime.datetime
     last_commit: datetime.datetime
-    ci: CI
+    ci: CI | None
 
 
 @dataclass
@@ -819,7 +819,7 @@ def match_version(
 
 
 def ci_comments(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
-    if not isinstance(obj, PR):
+    if not isinstance(obj, PR) or obj.ci is None:
         return
     failed_job_ids = [
         r["id"]
@@ -877,6 +877,7 @@ def needs_revision(
     if (
         obj.mergeable != "mergeable"
         or obj.changes_requested
+        or obj.ci is None
         or obj.ci.conclusion != "success"
     ):
         actions["to_label"].append("needs_revision")
@@ -888,7 +889,7 @@ def needs_ci(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> N
     if not isinstance(obj, PR):
         return
     label = "needs_ci"
-    if obj.ci.status != "completed":
+    if obj.ci is None or obj.ci.status != "completed":
         if "pre_azp" not in obj.labels:
             actions["to_label"].append(label)
     else:
@@ -899,7 +900,7 @@ def needs_ci(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> N
 def stale_ci(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR):
         return
-    if days_since(obj.ci.updated_at) > STALE_CI_DAYS:
+    if obj.ci is None or days_since(obj.ci.updated_at) > STALE_CI_DAYS:
         actions["to_label"].append("stale_ci")
     else:
         actions["to_unlabel"].append("stale_ci")
@@ -1160,15 +1161,18 @@ def fetch_object(
         kwargs["last_commit"] = datetime.datetime.fromisoformat(
             o["commits"]["nodes"][0]["commit"]["pushedDate"]
         )
-        check_suite = o["commits"]["nodes"][0]["commit"]["checkSuites"]["nodes"][0]
-        kwargs["ci"] = CI(
-            build_id=AZP_BUILD_ID_RE.search(
-                check_suite["checkRuns"]["nodes"][0]["detailsUrl"]
-            ).group("buildId"),
-            conclusion=check_suite["conclusion"].lower(),
-            status=check_suite["status"].lower(),
-            updated_at=datetime.datetime.fromisoformat(check_suite["updatedAt"]),
-        )
+        if check_suite := o["commits"]["nodes"][0]["commit"]["checkSuites"]["nodes"]:
+            check_suite = check_suite[0]
+            kwargs["ci"] = CI(
+                build_id=AZP_BUILD_ID_RE.search(
+                    check_suite["checkRuns"]["nodes"][0]["detailsUrl"]
+                ).group("buildId"),
+                conclusion=check_suite["conclusion"].lower(),
+                status=check_suite["status"].lower(),
+                updated_at=datetime.datetime.fromisoformat(check_suite["updatedAt"]),
+            )
+        else:
+            kwargs["ci"] = None
 
     return obj(**kwargs)
 
