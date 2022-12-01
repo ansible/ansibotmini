@@ -263,7 +263,7 @@ files(first: 50) {
 commits(last: 1) {
   nodes {
     commit {
-      pushedDate
+      committedDate
       checkSuites(last: 1) {
         nodes {
           checkRuns(last: 1) {
@@ -1171,7 +1171,7 @@ def fetch_object(
                 kwargs["last_review"]
             )
         kwargs["last_commit"] = datetime.datetime.fromisoformat(
-            o["commits"]["nodes"][0]["commit"]["pushedDate"]
+            o["commits"]["nodes"][0]["commit"]["committedDate"]
         )
         if check_suite := o["commits"]["nodes"][0]["commit"]["checkSuites"]["nodes"]:
             check_suite = check_suite[0]
