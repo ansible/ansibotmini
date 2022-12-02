@@ -949,11 +949,9 @@ def docs_only(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> 
             e
             for e in obj.events
             if e["name"] == "IssueComment"
-            and "<!--- boilerplate: docs_only --->" in e["body"]
+            and "<!--- boilerplate: docs_team_info --->" in e["body"]
         ):
-            with open(
-                os.path.join(os.path.dirname(__file__), "templates/docs_only.tmpl")
-            ) as f:
+            with open(get_template_path("docs_team_info")) as f:
                 actions["comments"].append(f.read())
 
 
