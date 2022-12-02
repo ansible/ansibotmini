@@ -911,14 +911,9 @@ def ci_comments(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -
 def needs_revision(
     obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
 ) -> None:
-    if not isinstance(obj, PR):
+    if not isinstance(obj, PR) or obj.ci is None:
         return
-    if (
-        obj.mergeable != "mergeable"
-        or obj.changes_requested
-        or obj.ci is None
-        or obj.ci.conclusion != "success"
-    ):
+    if obj.changes_requested or obj.ci.conclusion != "success":
         actions["to_label"].append("needs_revision")
     else:
         actions["to_unlabel"].append("needs_revision")
