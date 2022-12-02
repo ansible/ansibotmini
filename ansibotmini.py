@@ -692,16 +692,12 @@ def days_since(when: datetime.datetime) -> int:
     return (datetime.datetime.now(datetime.timezone.utc) - when).days
 
 
-def commands(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
-    # resolved_by_pr
+def resolved_by_pr(
+    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
+) -> None:
     if match := RESOLVED_BY_PR_RE.search(ctx["comment_able"]):
         if get_pr_state(int(match.group(1).removeprefix("#"))).lower() == "merged":
             actions["close"] = True
-
-    # label commands
-    for command in ("needs_info", "waiting_on_contributor"):
-        if command in ctx["commands_found"]:
-            actions["to_label"].append(command)
 
 
 def match_components(
@@ -770,6 +766,8 @@ def needs_triage(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) 
 def waiting_on_contributor(
     obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
 ) -> None:
+    if "waiting_on_contributor" in ctx["commands_found"]:
+        actions["to_label"].append("waiting_on_contributor")
     if (
         "waiting_on_contributor" in obj.labels
         and days_since(last_labeled(obj, "waiting_on_contributor"))
@@ -783,7 +781,10 @@ def waiting_on_contributor(
 
 
 def needs_info(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
-    if "needs_info" in obj.labels:
+    if "needs_info" in ctx["commands_found"]:
+        actions["to_label"].append("needs_info")
+
+    if "needs_info" in obj.labels or "needs_info" in actions["to_label"]:
         labeled_datetime = last_labeled(obj, "needs_info")
         commented_datetime = last_commented_by(obj, obj.author)
         if commented_datetime is None or labeled_datetime > commented_datetime:
@@ -815,6 +816,7 @@ def needs_info(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) ->
                             )
                         )
         else:
+            actions["to_label"].remove("needs_info")
             actions["to_unlabel"].append("needs_info")
 
 
@@ -992,8 +994,8 @@ def stale_review(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) 
 
 
 bot_funcs = [
-    commands,  # order matters
-    match_components,  # order matters
+    match_components,  # must be executed first, other funcs use detected components
+    resolved_by_pr,
     needs_triage,
     waiting_on_contributor,
     needs_info,
