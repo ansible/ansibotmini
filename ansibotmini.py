@@ -579,22 +579,44 @@ def get_committers() -> list[str]:
 
 def process_component(data):
     rv = []
-    for line in data:
-        for c in line.split(","):
-            if "<!--" in c or "-->" in c or " " in c:
+    for line in (
+        l
+        for l in data.strip("\t\n\r").splitlines()
+        if l and not ("<!--" in l or "-->" in l)
+    ):
+        for comma_split in line.split(","):
+            space_split = comma_split.split(" ")
+            if len(space_split) > 5:
                 continue
-            if "#" in c:
-                c = c.split("#")[0]
-            if c := (
-                c.strip("\t\n\r ")
-                .lower()
-                .removeprefix("the ")
-                .removeprefix("ansible.builtin.")
-                .removeprefix("module ")
-                .removesuffix(" module")
-                .replace("\\", "")
-            ):
-                rv.append(c)
+            for c in space_split:
+                c = c.strip()
+                if "/" in c:
+                    if "#" in c:
+                        c = c.split("#")[0]
+                    c.replace("\\", "").strip()
+                else:
+                    c = (
+                        c.lower()
+                        .removeprefix("the ")
+                        .removeprefix(f"module ")
+                        .removeprefix(f"plugin ")
+                        .removesuffix(f" module")
+                        .removesuffix(f" plugin")
+                        .replace("ansible.builtin.", "")
+                        .replace("ansible.legacy.", "")
+                        .replace(".py", "")
+                        .replace(".ps1", "")
+                    )
+
+                if c := re.sub(r"[^a-zA-Z/._-]", "", c):
+                    if (
+                        flatten := re.sub(
+                            r"(lib/ansible/modules)/(.*)(/.+\.(?:py|ps1))", r"\1\3", c
+                        )
+                    ) != c:
+                        rv.append(flatten)
+                    if len(c) > 1:
+                        rv.append(c)
 
     return rv
 
@@ -690,7 +712,7 @@ def match_components(
         components = obj.files
     elif isinstance(obj, Issue):
         if match := COMPONENT_RE.search(obj.body):
-            components = process_component(match.group(1).splitlines())
+            components = process_component(match.group(1))
             # collections redirect
             if "!needs_collection_redirect" not in ctx["commands_found"]:
                 if components_from_collections := list(
