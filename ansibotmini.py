@@ -643,7 +643,7 @@ def match_existing_components(filenames: list[str]) -> list[str]:
           }
         }
     """
-    paths = ["lib/ansible/modules/"]
+    paths = ["lib/ansible/modules/", "bin/", "lib/ansible/cli/"]
     paths.extend((f"lib/ansible/plugins/{name}/" for name in ANSIBLE_PLUGINS))
     files = []
     component_to_path = {}
