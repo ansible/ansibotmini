@@ -856,6 +856,8 @@ def ci_comments(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -
     resp = http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id)
     if resp.status_code == 404:
         # not available anymore
+        if obj.ci.conclusion == "success":
+            actions["to_unlabel"].append("ci_verified")
         return
     failed_job_ids = [
         r["id"]
@@ -863,6 +865,7 @@ def ci_comments(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -
         if r["type"] == "Job" and r["result"] == "failed"
     ]
     if not failed_job_ids:
+        actions["to_unlabel"].append("ci_verified")
         return
     ci_comment = []
     ci_verifieds = []
