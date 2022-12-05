@@ -41,6 +41,9 @@ AZP_TIMELINE_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds
 GALAXY_URL = "https://galaxy.ansible.com/"
 
 COLLECTIONS_LIST_ENDPOINT = "https://sivel.eng.ansible.com/api/v1/collections/list"
+COLLECTIONS_FILEMAP_ENDPOINT = (
+    "https://sivel.eng.ansible.com/api/v1/collections/file_map"
+)
 
 ANSIBLE_PLUGINS = [
     "action",
@@ -609,6 +612,7 @@ def process_component(data):
                     )
 
                 if c := re.sub(r"[^a-zA-Z/._-]", "", c):
+                    # TODO flatten plugins
                     if (
                         flatten := re.sub(
                             r"(lib/ansible/modules)/(.*)(/.+\.(?:py|ps1))", r"\1\3", c
@@ -703,51 +707,106 @@ def resolved_by_pr(
 def match_components(
     obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
 ) -> None:
-    components = []
+    existing_components = []
     if isinstance(obj, PR):
-        components = obj.files
+        existing_components = obj.files
     elif isinstance(obj, Issue):
+        processed_components = []
         if match := COMPONENT_RE.search(obj.body):
-            components = process_component(match.group(1))
-            # collections redirect
-            if "!needs_collection_redirect" not in ctx["commands_found"]:
-                if components_from_collections := list(
-                    filter(
-                        lambda x: len(x.split(".")) == 3
-                        and ".".join(x.split(".")[:2]) in ctx["valid_collections"],
-                        components,
-                    ),
-                ):
-                    entries = []
-                    for component in components_from_collections:
-                        fqcn = ".".join(component.split(".")[:2])
-                        repo = ctx["valid_collections"][fqcn]["manifest"][
-                            "collection_info"
-                        ]["repository"]
-                        galaxy_url = GALAXY_URL + fqcn.replace(".", "/")
-                        entries.append(f"* {component} -> {repo} ({galaxy_url})")
+            processed_components = process_component(match.group(1))
+            existing_components = match_existing_components(processed_components)
 
-                    with open(get_template_path("collection_redirect")) as f:
-                        actions["comments"].append(
-                            string.Template(f.read()).substitute(
-                                components="\n".join(entries)
+        command_components = []
+        for component_command in COMPONENT_COMMAND_RE.findall(ctx["comment_able"]):
+            path = component_command[1:]
+            command_components.append(component_command[1:])
+            if component_command.startswith("="):
+                existing_components = [path]
+            elif component_command.startswith("+"):
+                existing_components.append(path)
+            elif component_command.startswith("-"):
+                if path in existing_components:
+                    existing_components.remove(path)
+
+        if "!needs_collection_redirect" not in ctx["commands_found"]:
+            entries = []
+            # components such as namespace.collection_name.plugin_name
+            for component in processed_components:
+                fqcn = component.split(".")
+                if len(fqcn) != 3:
+                    continue
+                if collection_data := ctx["collections_list"].get(".".join(fqcn[:2])):
+                    entries.append(
+                        (
+                            component,
+                            collection_data["manifest"]["collection_info"],
+                        )
+                    )
+
+            for component in itertools.chain(processed_components, command_components):
+                if "/" not in component:
+                    continue
+                # TODO all plugins
+                flatten = re.sub(
+                    r"lib/ansible/(plugins/connection)/(.*)(/.+\.(?:py|ps1))",
+                    r"\1\3",
+                    component,
+                ).replace("lib/ansible/", "")
+                for fqcn in ctx["collections_file_map"].get(flatten, []):
+                    entries.append(
+                        (
+                            component,
+                            ctx["collections_list"][fqcn]["manifest"][
+                                "collection_info"
+                            ],
+                        )
+                    )
+                if entries:
+                    break
+            else:
+                for candidate in [
+                    f"plugins/{plugin_type}/{component}.{ext}"
+                    for component, plugin_type, ext in itertools.product(
+                        (c for c in processed_components if "/" not in c),
+                        (itertools.chain(ANSIBLE_PLUGINS, ["modules"])),
+                        ("py", "ps1"),
+                    )
+                ]:
+                    for fqcn in ctx["collections_file_map"].get(candidate, []):
+                        entries.append(
+                            (
+                                candidate,
+                                ctx["collections_list"][fqcn]["manifest"][
+                                    "collection_info"
+                                ],
                             )
                         )
-                    actions["to_label"].append("bot_closed")
-                    actions["close"] = True
-            components = match_existing_components(components)
 
-    for component_command in COMPONENT_COMMAND_RE.findall(ctx["comment_able"]):
-        path = component_command[1:]
-        if component_command.startswith("="):
-            components = [path]
-        elif component_command.startswith("+"):
-            components.append(path)
-        elif component_command.startswith("-"):
-            if path in components:
-                components.remove(path)
+            if entries:
+                if len(entries) > 1:
+                    entries = list(
+                        filter(
+                            lambda x: x[1]["namespace"] in x[1]["repository"]
+                            and x[1]["name"] in x[1]["repository"],
+                            entries,
+                        )
+                    )
+                assembled_entries = []
+                for candidate, collection_info in entries:
+                    assembled_entries.append(
+                        f"* {candidate} -> {collection_info['repository']} "
+                        f"({GALAXY_URL}{collection_info['namespace']}.{collection_info['name']})"
+                    )
+                with open(get_template_path("collection_redirect")) as f:
+                    actions["comments"].append(
+                        string.Template(f.read()).substitute(
+                            components="\n".join(assembled_entries)
+                        )
+                    )
+                actions["to_label"].append("bot_closed")
+                actions["close"] = True
 
-    obj.components = components
+    obj.components = existing_components
 
     logging.info(
         f"{obj.__class__.__name__} #{obj.number}: identified components: {', '.join(obj.components)}"
@@ -1011,7 +1070,8 @@ bot_funcs = [
 
 def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
     ctx = {
-        "valid_collections": http_request(COLLECTIONS_LIST_ENDPOINT).json(),
+        "collections_list": http_request(COLLECTIONS_LIST_ENDPOINT).json(),
+        "collections_file_map": http_request(COLLECTIONS_FILEMAP_ENDPOINT).json(),
         "committers": get_committers(),
     }
     for obj in objects.values():
