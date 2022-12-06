@@ -681,13 +681,27 @@ def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
     )
 
 
-def last_commented_by(obj: GH_OBJ, name: str) -> datetime.datetime:
+def last_commented_by(obj: GH_OBJ, name: str) -> datetime.datetime | None:
     return max(
         (
             e["created_at"]
             for e in obj.events
             if e["name"] == "IssueComment" and e["author"] == name
         ),
+        default=None,
+    )
+
+
+def last_boilerplate(obj: GH_OBJ, name: str) -> datetime.datetime | None:
+    return max(
+        (
+            e
+            for e in obj.events
+            if e["name"] == "IssueComment"
+            and e["author"] == "ansibot"
+            and f"<!--- boilerplate: {name} --->" in e["body"]
+        ),
+        key=lambda x: x["created_at"],
         default=None,
     )
 
@@ -857,16 +871,8 @@ def needs_info(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) ->
                         )
                     )
             elif days_labeled > NEEDS_INFO_WARN_DAYS:
-                last_warned = max(
-                    [
-                        e["created_at"]
-                        for e in obj.events
-                        if e["name"] == "IssueComment"
-                        and "<!--- boilerplate: needs_info_warn --->" in e["body"]
-                    ],
-                    default=None,
-                )
-                if last_warned is None or last_warned < labeled_datetime:
+                last_warned = last_boilerplate(obj, "needs_info_warn")
+                if last_warned is None or last_warned["created_at"] < labeled_datetime:
                     with open(get_template_path("needs_info_warn")) as f:
                         actions["comments"].append(
                             string.Template(f.read()).substitute(
@@ -1004,12 +1010,7 @@ def docs_only(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> 
         return
     if all(c.startswith("docs/") for c in obj.components):
         actions["to_label"].append("docs_only")
-        if not any(
-            e
-            for e in obj.events
-            if e["name"] == "IssueComment"
-            and "<!--- boilerplate: docs_team_info --->" in e["body"]
-        ):
+        if last_boilerplate(obj, "docs_team_info") is None:
             with open(get_template_path("docs_team_info")) as f:
                 actions["comments"].append(f.read())
 
