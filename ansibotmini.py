@@ -742,6 +742,24 @@ def match_components(
                 if path in existing_components:
                     existing_components.remove(path)
 
+        post_comment = True
+        if (comment := last_boilerplate(obj, "components_banner")) is not None:
+            last_components = [
+                re.sub(r"[*`\[\]]", "", re.sub(r"\([^)]+\)", "", line)).strip()
+                for line in comment["body"].splitlines()
+                if line.startswith("*")
+            ]
+            post_comment = existing_components != last_components
+
+        if post_comment:
+            entries = [f"* `{component}`" for component in existing_components]
+            with open(get_template_path("components_banner")) as f:
+                actions["comments"].append(
+                    string.Template(f.read()).substitute(
+                        components="\n".join(entries) if entries else None
+                    )
+                )
+
         if "!needs_collection_redirect" not in ctx["commands_found"]:
             entries = []
             # components such as namespace.collection_name.plugin_name
