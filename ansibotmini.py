@@ -295,6 +295,12 @@ reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, DISMISSED]) {
     updatedAt
   }
 }
+headRepository {
+  name
+  owner {
+    login
+  }
+}
 """,
 )
 
@@ -332,6 +338,7 @@ class PR(Issue):
     last_review: datetime.datetime
     last_commit: datetime.datetime
     ci: CI | None
+    from_repo: str
 
 
 @dataclass
@@ -1067,6 +1074,19 @@ def stale_review(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) 
         actions["to_unlabel"].append("stale_review")
 
 
+def pr_from_upstream(
+    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
+) -> None:
+    if not isinstance(obj, PR) or obj.from_repo != "ansible/ansible":
+        return
+    actions["close"] = True
+    with open(get_template_path("pr_from_upstream")) as f:
+        actions["comments"].append(
+            string.Template(f.read()).substitute(author=obj.author)
+        )
+    # TODO cancel CI
+
+
 bot_funcs = [
     match_components,  # must be executed first, other funcs use detected components
     resolved_by_pr,
@@ -1084,6 +1104,7 @@ bot_funcs = [
     is_module,
     needs_rebase,
     stale_review,
+    pr_from_upstream,
 ]
 
 
@@ -1287,6 +1308,9 @@ def fetch_object(
             )
         else:
             kwargs["ci"] = None
+        kwargs[
+            "from_repo"
+        ] = f"{o['headRepository']['owner']['login']}/{o['headRepository']['name']}"
 
     return obj(**kwargs)
 
