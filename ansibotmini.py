@@ -1308,9 +1308,8 @@ def fetch_object(
             )
         else:
             kwargs["ci"] = None
-        kwargs[
-            "from_repo"
-        ] = f"{o['headRepository']['owner']['login']}/{o['headRepository']['name']}"
+        repo = o['headRepository']
+        kwargs["from_repo"] = f"{repo['owner']['login']}/{repo['name']}" if repo else "ghost/ghost"
 
     return obj(**kwargs)
 
