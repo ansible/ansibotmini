@@ -619,7 +619,6 @@ def process_component(data):
                     )
 
                 if c := re.sub(r"[^a-zA-Z/._-]", "", c):
-                    # TODO flatten plugins
                     if (
                         flatten := re.sub(
                             r"(lib/ansible/modules)/(.*)(/.+\.(?:py|ps1))", r"\1\3", c
