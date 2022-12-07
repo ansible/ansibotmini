@@ -698,7 +698,7 @@ def last_commented_by(obj: GH_OBJ, name: str) -> datetime.datetime | None:
     )
 
 
-def last_boilerplate(obj: GH_OBJ, name: str) -> datetime.datetime | None:
+def last_boilerplate(obj: GH_OBJ, name: str) -> dict[str, t.Any] | None:
     return max(
         (
             e
