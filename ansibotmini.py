@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import collections
 import concurrent.futures
 import configparser
@@ -38,6 +39,9 @@ if sys.version_info < minimal_required_python_version:
 
 AZP_ARTIFACTS_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s/artifacts?api-version=7.0"
 AZP_TIMELINE_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s/timeline/?api-version=7.0"
+AZP_BUILD_URL_FMT = (
+    "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s?api-version=7.0"
+)
 GALAXY_URL = "https://galaxy.ansible.com/"
 
 COLLECTIONS_LIST_ENDPOINT = "https://sivel.eng.ansible.com/api/v1/collections/list"
@@ -77,6 +81,7 @@ GITHUB_GRAPHQL_URL = "https://api.github.com/graphql"
 config = configparser.ConfigParser()
 config.read(CONFIG_FILENAME)
 gh_token = config.get("default", "gh_token")
+azp_token = config.get("default", "azp_token")
 
 COMPONENT_RE = re.compile(
     r"#{3,5}\scomponent\sname(.+?)(?=#{3,5})", flags=re.IGNORECASE | re.DOTALL
@@ -1083,7 +1088,24 @@ def pr_from_upstream(
         actions["comments"].append(
             string.Template(f.read()).substitute(author=obj.author)
         )
-    # TODO cancel CI
+    if obj.ci is not None:
+        cancel_ci(obj.ci.build_id)
+
+
+def cancel_ci(build_id: int) -> None:
+    logging.info("Cancelling CI buildId %d", build_id)
+    resp = http_request(
+        url=AZP_BUILD_URL_FMT % build_id,
+        method="patch",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Basic {}".format(
+                base64.b64encode(f":{azp_token}".encode()).decode()
+            ),
+        },
+        data=json.dumps({"status": "Cancelling"}),
+    )
+    logging.info("Cancelled with status_code: %d", resp.status_code)
 
 
 bot_funcs = [
