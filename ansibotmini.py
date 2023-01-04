@@ -266,7 +266,7 @@ files(first: 50) {
     path
   }
 }
-commits(last: 1) {
+last_commit: commits(last: 1) {
   nodes {
     commit {
       committedDate
@@ -283,6 +283,17 @@ commits(last: 1) {
           app {
             name
           }
+        }
+      }
+    }
+  }
+}
+commits(last: 50) {
+  nodes {
+    commit {
+      parents(last: 2) {
+        nodes {
+          id
         }
       }
     }
@@ -342,6 +353,7 @@ class PR(Issue):
     last_commit: datetime.datetime
     ci: CI | None
     from_repo: str
+    merge_commit: bool
 
 
 @dataclass
@@ -1098,7 +1110,7 @@ def pr_from_upstream(
             string.Template(f.read()).substitute(author=obj.author)
         )
     if obj.ci is not None:
-        cancel_ci(obj.ci.build_id)
+        actions["cancel_ci"] = True
 
 
 def cancel_ci(build_id: int) -> None:
@@ -1115,6 +1127,13 @@ def cancel_ci(build_id: int) -> None:
         data=json.dumps({"status": "Cancelling"}),
     )
     logging.info("Cancelled with status_code: %d", resp.status_code)
+
+
+def bad_pr(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    if not isinstance(obj, PR):
+        return
+    if obj.merge_commit:
+        actions["cancel_ci"] = True
 
 
 bot_funcs = [
@@ -1135,6 +1154,7 @@ bot_funcs = [
     needs_rebase,
     stale_review,
     pr_from_upstream,
+    bad_pr,
 ]
 
 
@@ -1146,7 +1166,13 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
     }
     for obj in objects.values():
         logging.info(f"Triaging {obj.__class__.__name__} {obj.title} (#{obj.number})")
-        actions = {"to_label": [], "to_unlabel": [], "comments": [], "close": False}
+        actions = {
+            "to_label": [],
+            "to_unlabel": [],
+            "comments": [],
+            "cancel_ci": False,
+            "close": False,
+        }
         # commands
         bodies = itertools.chain(
             ((obj.body, obj.updated_at),),
@@ -1219,6 +1245,9 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
 
             for comment in actions["comments"]:
                 add_comment(obj, comment)
+
+            if actions["cancel_ci"]:
+                cancel_ci(obj.ci.build_id)
 
             if actions["close"]:
                 close_object(obj)
@@ -1350,9 +1379,11 @@ def fetch_object(
                 kwargs["last_review"]
             )
         kwargs["last_commit"] = datetime.datetime.fromisoformat(
-            o["commits"]["nodes"][0]["commit"]["committedDate"]
+            o["last_commit"]["nodes"][0]["commit"]["committedDate"]
         )
-        if check_suite := o["commits"]["nodes"][0]["commit"]["checkSuites"]["nodes"]:
+        if check_suite := o["last_commit"]["nodes"][0]["commit"]["checkSuites"][
+            "nodes"
+        ]:
             check_suite = check_suite[0]
             conclusion = check_suite["conclusion"]
             if conclusion is not None:
@@ -1370,6 +1401,9 @@ def fetch_object(
         repo = o["headRepository"]
         kwargs["from_repo"] = (
             f"{repo['owner']['login']}/{repo['name']}" if repo else "ghost/ghost"
+        )
+        kwargs["merge_commit"] = any(
+            len(n["commit"]["parents"]["nodes"]) > 1 for n in o["commits"]["nodes"]
         )
 
     return obj(**kwargs)
