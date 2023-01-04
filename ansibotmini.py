@@ -42,32 +42,16 @@ AZP_TIMELINE_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds
 AZP_BUILD_URL_FMT = (
     "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s?api-version=7.0"
 )
-GALAXY_URL = "https://galaxy.ansible.com/"
+AZP_BUILD_ID_RE = re.compile(
+    r"https://dev\.azure\.com/(?P<organization>[^/]+)/(?P<project>[^/]+)/_build/results\?buildId=(?P<buildId>[0-9]+)",
+)
 
+GALAXY_URL = "https://galaxy.ansible.com/"
+GITHUB_GRAPHQL_URL = "https://api.github.com/graphql"
 COLLECTIONS_LIST_ENDPOINT = "https://sivel.eng.ansible.com/api/v1/collections/list"
 COLLECTIONS_FILEMAP_ENDPOINT = (
     "https://sivel.eng.ansible.com/api/v1/collections/file_map"
 )
-
-ANSIBLE_PLUGINS = [
-    "action",
-    "become",
-    "cache",
-    "callback",
-    "cliconf",
-    "connection",
-    "doc_fragments",
-    "filter",
-    "httpapi",
-    "inventory",
-    "lookup",
-    "netconf",
-    "shell",
-    "strategy",
-    "terminal",
-    "test",
-    "vars",
-]
 
 STALE_CI_DAYS = 7
 STALE_ISSUE_DAYS = 7
@@ -75,9 +59,9 @@ NEEDS_INFO_WARN_DAYS = 14
 NEEDS_INFO_CLOSE_DAYS = 28
 WAITING_ON_CONTRIBUTOR_CLOSE_DAYS = 365
 SLEEP_SECONDS = 300
+
 CONFIG_FILENAME = os.path.expanduser("~/.ansibotmini.cfg")
 CACHE_FILENAME = os.path.expanduser("~/.ansibotmini_cache")
-GITHUB_GRAPHQL_URL = "https://api.github.com/graphql"
 config = configparser.ConfigParser()
 config.read(CONFIG_FILENAME)
 gh_token = config.get("default", "gh_token")
@@ -96,18 +80,37 @@ COMPONENT_COMMAND_RE = re.compile(
 
 VALID_COMMANDS = (
     "bot_skip",
+    "!bot_skip",
     "bot_broken",
+    "!bot_broken",
     "needs_info",
     "waiting_on_contributor",
     "!needs_collection_redirect",
 )
-COMMANDS_RE = re.compile(f"^(?:{'|'.join(VALID_COMMANDS)})$", flags=re.MULTILINE)
+COMMANDS_RE = re.compile(f"^({'|'.join(VALID_COMMANDS)})\s*$", flags=re.MULTILINE)
+RESOLVED_BY_PR_RE = re.compile(r"^resolved_by_pr\s([#0-9]+)\s*$", flags=re.MULTILINE)
 
-AZP_BUILD_ID_RE = re.compile(
-    r"https://dev\.azure\.com/(?P<organization>[^/]+)/(?P<project>[^/]+)/_build/results\?buildId=(?P<buildId>[0-9]+)",
+ANSIBLE_PLUGINS = frozenset(
+    (
+        "action",
+        "become",
+        "cache",
+        "callback",
+        "cliconf",
+        "connection",
+        "doc_fragments",
+        "filter",
+        "httpapi",
+        "inventory",
+        "lookup",
+        "netconf",
+        "shell",
+        "strategy",
+        "terminal",
+        "test",
+        "vars",
+    )
 )
-
-RESOLVED_BY_PR_RE = re.compile(r"^resolved_by_pr\s([#0-9]+)$", flags=re.MULTILINE)
 
 QUERY_NUMBERS_TMPL = """
 query ($after: String) {
@@ -347,6 +350,12 @@ class CI:
     conclusion: str
     status: str
     updated_at: datetime.datetime
+
+
+@dataclass
+class Command:
+    updated_at: datetime.datetime
+    arg: t.Optional[str] = None
 
 
 GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
@@ -722,8 +731,10 @@ def days_since(when: datetime.datetime) -> int:
 def resolved_by_pr(
     obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
 ) -> None:
-    if match := RESOLVED_BY_PR_RE.search(ctx["comment_able"]):
-        if get_pr_state(int(match.group(1).removeprefix("#"))).lower() == "merged":
+    if commands := ctx["commands_found"].get("resolved_by_pr"):
+        if all(
+            get_pr_state(int(command.arg)).lower() == "merged" for command in commands
+        ):
             actions["close"] = True
 
 
@@ -740,14 +751,14 @@ def match_components(
             existing_components = match_existing_components(processed_components)
 
         command_components = []
-        for component_command in COMPONENT_COMMAND_RE.findall(ctx["comment_able"]):
-            path = component_command[1:]
-            command_components.append(component_command[1:])
-            if component_command.startswith("="):
+        for component in ctx["commands_found"].get("component", []):
+            path = component[1:]
+            command_components.append(component[1:])
+            if component.startswith("="):
                 existing_components = [path]
-            elif component_command.startswith("+"):
+            elif component.startswith("+"):
                 existing_components.append(path)
-            elif component_command.startswith("-"):
+            elif component.startswith("-"):
                 if path in existing_components:
                     existing_components.remove(path)
 
@@ -1136,26 +1147,55 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
     for obj in objects.values():
         logging.info(f"Triaging {obj.__class__.__name__} {obj.title} (#{obj.number})")
         actions = {"to_label": [], "to_unlabel": [], "comments": [], "close": False}
-        # TODO negate commands
-        ctx["comment_able"] = "\n".join(
-            itertools.chain(
-                (obj.body,),
-                (e["body"] for e in obj.events if e["name"] == "IssueComment"),
-            )
+        # commands
+        bodies = itertools.chain(
+            ((obj.body, obj.updated_at),),
+            (
+                (e["body"], e["updated_at"])
+                for e in obj.events
+                if e["name"] == "IssueComment"
+            ),
         )
-        ctx["commands_found"] = COMMANDS_RE.findall(ctx["comment_able"])
-
-        skip_this = False
-        for command in ("bot_skip", "bot_broken"):
-            if command in ctx["commands_found"]:
-                logging.info(
-                    f"Skipping {obj.__class__.__name__} {obj.title} (#{obj.number}) due to {command}"
+        ctx["commands_found"] = collections.defaultdict(list)
+        for body, updated_at in bodies:
+            for command in COMMANDS_RE.findall(body):
+                ctx["commands_found"][command].append(Command(updated_at=updated_at))
+            if match := RESOLVED_BY_PR_RE.search(body):
+                ctx["commands_found"]["resolved_by_pr"].append(
+                    Command(updated_at=updated_at, arg=match.group(1).removeprefix("#"))
                 )
-                skip_this = True
-                break
-        if skip_this:
+            for component in COMPONENT_COMMAND_RE.findall(body):
+                ctx["commands_found"]["component"].append(
+                    Command(updated_at=updated_at, arg=component)
+                )
+
+        is_bot_broken = "bot_broken" in ctx["commands_found"] and (
+            "!bot_broken" not in ctx["commands_found"]
+            or ctx["commands_found"]["bot_broken"][-1].updated_at
+            > ctx["commands_found"]["!bot_broken"][-1].updated_at
+        )
+        is_bot_skip = "bot_skip" in ctx["commands_found"] and (
+            "!bot_skip" not in ctx["commands_found"]
+            or ctx["commands_found"]["bot_skip"][-1].updated_at
+            > ctx["commands_found"]["!bot_skip"][-1].updated_at
+        )
+        if is_bot_broken:
+            logging.info(
+                f"Skipping {obj.__class__.__name__} {obj.title} (#{obj.number}) due to bot_broken"
+            )
+            if not dry_run:
+                add_labels(obj, ["bot_broken"])
+            continue
+        else:
+            if not dry_run:
+                remove_labels(obj, ["bot_broken"])
+        if is_bot_skip:
+            logging.info(
+                f"Skipping {obj.__class__.__name__} {obj.title} (#{obj.number}) due to bot_skip"
+            )
             continue
 
+        # triage
         for f in bot_funcs:
             f(obj, actions, ctx)
 
