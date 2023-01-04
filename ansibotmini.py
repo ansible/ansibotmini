@@ -109,11 +109,6 @@ AZP_BUILD_ID_RE = re.compile(
 
 RESOLVED_BY_PR_RE = re.compile(r"^resolved_by_pr\s([#0-9]+)$", flags=re.MULTILINE)
 
-HEADERS = {
-    "Accept": "application/json",
-    "Authorization": f"Bearer {gh_token}",
-}
-
 QUERY_NUMBERS_TMPL = """
 query ($after: String) {
   rateLimit {
@@ -397,7 +392,10 @@ def send_query(data: str) -> Response:
     return http_request(
         GITHUB_GRAPHQL_URL,
         method="POST",
-        headers=HEADERS,
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {gh_token}",
+        },
         data=data,
     )
 
@@ -1329,8 +1327,10 @@ def fetch_object(
             )
         else:
             kwargs["ci"] = None
-        repo = o['headRepository']
-        kwargs["from_repo"] = f"{repo['owner']['login']}/{repo['name']}" if repo else "ghost/ghost"
+        repo = o["headRepository"]
+        kwargs["from_repo"] = (
+            f"{repo['owner']['login']}/{repo['name']}" if repo else "ghost/ghost"
+        )
 
     return obj(**kwargs)
 
