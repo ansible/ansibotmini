@@ -390,6 +390,14 @@ class Actions:
     close: bool = False
 
 
+@dataclass
+class TriageContext:
+    collections_list: dict[str, t.Any]
+    collections_file_map: dict[str, t.Any]
+    committers: list[str]
+    commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
+
+
 GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
 GH_OBJ_T = t.TypeVar("GH_OBJ_T", t.Type[Issue], t.Type[PR])
 
@@ -760,15 +768,15 @@ def days_since(when: datetime.datetime) -> int:
     return (datetime.datetime.now(datetime.timezone.utc) - when).days
 
 
-def resolved_by_pr(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
-    if commands := ctx["commands_found"].get("resolved_by_pr"):
+def resolved_by_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+    if commands := ctx.commands_found.get("resolved_by_pr"):
         if all(
             get_pr_state(int(command.arg)).lower() == "merged" for command in commands
         ):
             actions.close = True
 
 
-def match_components(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     existing_components = []
     if isinstance(obj, PR):
         existing_components = obj.files
@@ -779,7 +787,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> No
             existing_components = match_existing_components(processed_components)
 
         command_components = []
-        for component in ctx["commands_found"].get("component", []):
+        for component in ctx.commands_found.get("component", []):
             path = component[1:]
             command_components.append(component[1:])
             if component.startswith("="):
@@ -808,14 +816,14 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> No
                     )
                 )
 
-        if "!needs_collection_redirect" not in ctx["commands_found"]:
+        if "!needs_collection_redirect" not in ctx.commands_found:
             entries = []
             # components such as namespace.collection_name.plugin_name
             for component in processed_components:
                 fqcn = component.split(".")
                 if len(fqcn) != 3:
                     continue
-                if collection_data := ctx["collections_list"].get(".".join(fqcn[:2])):
+                if collection_data := ctx.collections_list.get(".".join(fqcn[:2])):
                     entries.append(
                         (
                             component,
@@ -832,13 +840,11 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> No
                     r"\1\3",
                     component,
                 ).replace("lib/ansible/", "")
-                for fqcn in ctx["collections_file_map"].get(flatten, []):
+                for fqcn in ctx.collections_file_map.get(flatten, []):
                     entries.append(
                         (
                             component,
-                            ctx["collections_list"][fqcn]["manifest"][
-                                "collection_info"
-                            ],
+                            ctx.collections_list[fqcn]["manifest"]["collection_info"],
                         )
                     )
                 if entries:
@@ -852,11 +858,11 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> No
                         ("py", "ps1"),
                     )
                 ]:
-                    for fqcn in ctx["collections_file_map"].get(candidate, []):
+                    for fqcn in ctx.collections_file_map.get(candidate, []):
                         entries.append(
                             (
                                 candidate,
-                                ctx["collections_list"][fqcn]["manifest"][
+                                ctx.collections_list[fqcn]["manifest"][
                                     "collection_info"
                                 ],
                             )
@@ -893,7 +899,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> No
     )
 
 
-def needs_triage(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def needs_triage(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not any(
         e
         for e in obj.events
@@ -902,10 +908,8 @@ def needs_triage(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
         actions.to_label.append("needs_triage")
 
 
-def waiting_on_contributor(
-    obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]
-) -> None:
-    if "waiting_on_contributor" in ctx["commands_found"]:
+def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+    if "waiting_on_contributor" in ctx.commands_found:
         actions.to_label.append("waiting_on_contributor")
     if (
         "waiting_on_contributor" in obj.labels
@@ -919,8 +923,8 @@ def waiting_on_contributor(
             actions.comments.append(f.read())
 
 
-def needs_info(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
-    if "needs_info" in ctx["commands_found"]:
+def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+    if "needs_info" in ctx.commands_found:
         actions.to_label.append("needs_info")
 
     if "needs_info" in obj.labels or "needs_info" in actions.to_label:
@@ -952,7 +956,7 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
             actions.to_unlabel.append("needs_info")
 
 
-def match_object_type(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def match_object_type(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if match := OBJ_TYPE_RE.search(obj.body):
         data = re.sub(r"~[^~]+~", "", match.group(1).lower())
         if "feature" in data:
@@ -965,20 +969,20 @@ def match_object_type(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> N
             actions.to_label.append("test")
 
 
-def match_version(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if match := VERSION_RE.search(obj.body):
         label_name = f"affects_{'.'.join(match.group(1).split('.')[:2])}"
         if not any(
             e
             for e in obj.events
             if e["name"] == "UnlabeledEvent"
-            and e["author"] in ctx["committers"]
+            and e["author"] in ctx.committers
             and e["label"] == label_name
         ):
             actions.to_label.append(label_name)
 
 
-def ci_comments(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR) or obj.ci is None:
         return
     resp = http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id)
@@ -1036,7 +1040,7 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
         actions.to_unlabel.append("ci_verified")
 
 
-def needs_revision(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def needs_revision(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR) or obj.ci is None:
         return
     if obj.changes_requested or obj.ci.conclusion != "success":
@@ -1045,7 +1049,7 @@ def needs_revision(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None
         actions.to_unlabel.append("needs_revision")
 
 
-def needs_ci(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
     label = "needs_ci"
@@ -1057,7 +1061,7 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
         actions.to_unlabel.append("pre_azp")
 
 
-def stale_ci(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def stale_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR) or obj.ci is None:
         return
     if days_since(obj.ci.updated_at) > STALE_CI_DAYS:
@@ -1066,7 +1070,7 @@ def stale_ci(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
         actions.to_unlabel.append("stale_ci")
 
 
-def docs_only(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def docs_only(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
     if all(c.startswith("docs/") for c in obj.components):
@@ -1076,7 +1080,7 @@ def docs_only(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
                 actions.comments.append(f.read())
 
 
-def backport(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def backport(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
     if obj.branch.startswith("stable-"):
@@ -1085,14 +1089,14 @@ def backport(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
         actions.to_unlabel.append("backport")
 
 
-def is_module(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def is_module(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if any(c.startswith("lib/ansible/modules/") for c in obj.components):
         actions.to_label.append("module")
     else:
         actions.to_unlabel.append("module")
 
 
-def needs_rebase(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def needs_rebase(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
     if obj.mergeable == "conflicting":
@@ -1101,7 +1105,7 @@ def needs_rebase(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
         actions.to_unlabel.append("needs_rebase")
 
 
-def stale_review(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def stale_review(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR) or obj.last_review is None:
         return
     if obj.last_review < obj.last_commit:
@@ -1110,7 +1114,7 @@ def stale_review(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
         actions.to_unlabel.append("stale_review")
 
 
-def pr_from_upstream(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def pr_from_upstream(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR) or obj.from_repo != "ansible/ansible":
         return
     actions.close = True
@@ -1136,14 +1140,14 @@ def cancel_ci(build_id: int) -> None:
     logging.info("Cancelled with status_code: %d", resp.status_code)
 
 
-def bad_pr(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def bad_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
     if obj.merge_commit:
         actions.cancel_ci = True
 
 
-def linked_objs(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def linked_objs(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if isinstance(obj, PR):
         if obj.has_issue:
             actions.to_label.append("has_issue")
@@ -1156,7 +1160,7 @@ def linked_objs(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
             actions.to_unlabel.append("has_pr")
 
 
-def needs_template(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
+def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, Issue):
         return
     missing = []
@@ -1192,7 +1196,7 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None
                 and e["label"] == "needs_info"
                 and e["author"] != BOT_ACCOUNT
             ]
-            and "needs_info" not in ctx["commands_found"]
+            and "needs_info" not in ctx.commands_found
         ):
             actions.to_unlabel.append("needs_info")
 
@@ -1222,11 +1226,11 @@ bot_funcs = [
 
 
 def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
-    ctx = {
-        "collections_list": http_request(COLLECTIONS_LIST_ENDPOINT).json(),
-        "collections_file_map": http_request(COLLECTIONS_FILEMAP_ENDPOINT).json(),
-        "committers": get_committers(),
-    }
+    ctx = TriageContext(
+        collections_list=http_request(COLLECTIONS_LIST_ENDPOINT).json(),
+        collections_file_map=http_request(COLLECTIONS_FILEMAP_ENDPOINT).json(),
+        committers=get_committers(),
+    )
     for obj in objects.values():
         logging.info(f"Triaging {obj.__class__.__name__} {obj.title} (#{obj.number})")
         # commands
@@ -1238,28 +1242,28 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 if e["name"] == "IssueComment"
             ),
         )
-        ctx["commands_found"] = collections.defaultdict(list)
+        ctx.commands_found = collections.defaultdict(list)
         for body, updated_at in bodies:
             for command in COMMANDS_RE.findall(body):
-                ctx["commands_found"][command].append(Command(updated_at=updated_at))
+                ctx.commands_found[command].append(Command(updated_at=updated_at))
             if match := RESOLVED_BY_PR_RE.search(body):
-                ctx["commands_found"]["resolved_by_pr"].append(
+                ctx.commands_found["resolved_by_pr"].append(
                     Command(updated_at=updated_at, arg=match.group(1).removeprefix("#"))
                 )
             for component in COMPONENT_COMMAND_RE.findall(body):
-                ctx["commands_found"]["component"].append(
+                ctx.commands_found["component"].append(
                     Command(updated_at=updated_at, arg=component)
                 )
 
-        is_bot_broken = "bot_broken" in ctx["commands_found"] and (
-            "!bot_broken" not in ctx["commands_found"]
-            or ctx["commands_found"]["bot_broken"][-1].updated_at
-            > ctx["commands_found"]["!bot_broken"][-1].updated_at
+        is_bot_broken = "bot_broken" in ctx.commands_found and (
+            "!bot_broken" not in ctx.commands_found
+            or ctx.commands_found["bot_broken"][-1].updated_at
+            > ctx.commands_found["!bot_broken"][-1].updated_at
         )
-        is_bot_skip = "bot_skip" in ctx["commands_found"] and (
-            "!bot_skip" not in ctx["commands_found"]
-            or ctx["commands_found"]["bot_skip"][-1].updated_at
-            > ctx["commands_found"]["!bot_skip"][-1].updated_at
+        is_bot_skip = "bot_skip" in ctx.commands_found and (
+            "!bot_skip" not in ctx.commands_found
+            or ctx.commands_found["bot_skip"][-1].updated_at
+            > ctx.commands_found["!bot_skip"][-1].updated_at
         )
         if is_bot_broken:
             logging.info(
