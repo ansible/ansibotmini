@@ -37,6 +37,8 @@ if sys.version_info < minimal_required_python_version:
     )
 
 
+BOT_ACCOUNT = "ansibot"
+
 AZP_ARTIFACTS_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s/artifacts?api-version=7.0"
 AZP_TIMELINE_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s/timeline/?api-version=7.0"
 AZP_BUILD_URL_FMT = (
@@ -736,7 +738,7 @@ def last_boilerplate(obj: GH_OBJ, name: str) -> dict[str, t.Any] | None:
             e
             for e in obj.events
             if e["name"] == "IssueComment"
-            and e["author"] == "ansibot"
+            and e["author"] == BOT_ACCOUNT
             and f"<!--- boilerplate: {name} --->" in e["body"]
         ),
         key=lambda x: x["created_at"],
@@ -1013,7 +1015,7 @@ def ci_comments(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -
             e
             for e in obj.events
             if e["name"] == "IssueComment"
-            and e["author"] == "ansibot"
+            and e["author"] == BOT_ACCOUNT
             and "<!--- boilerplate: ci_test_result --->" in e["body"]
             and f"<!-- r_hash: {r_hash} -->" in e["body"]
         ):
@@ -1192,7 +1194,7 @@ def needs_template(
             for e in obj.events
             if e["name"] == "LabeledEvent"
             and e["label"] == "needs_info"
-            and e["author"] != "ansibot"
+            and e["author"] != BOT_ACCOUNT
         ] and "needs_info" not in ctx["commands_found"]:
             actions["to_unlabel"].append("needs_info")
 
