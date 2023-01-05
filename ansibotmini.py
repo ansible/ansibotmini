@@ -112,6 +112,19 @@ ANSIBLE_PLUGINS = frozenset(
     )
 )
 
+# TODO fetch from the actual template
+ISSUE_TEMPLATE_SECTIONS = frozenset(
+    (
+        "Summary",
+        "Issue Type",
+        "Component Name",
+        "Ansible Version",
+        "Configuration",
+        "OS / Environment",
+        "Code of Conduct",
+    )
+)
+
 QUERY_NUMBERS_TMPL = """
 query ($after: String) {
   rateLimit {
@@ -1144,6 +1157,46 @@ def linked_objs(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -
             actions["to_unlabel"].append("has_pr")
 
 
+def needs_template(
+    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
+) -> None:
+    if not isinstance(obj, Issue):
+        return
+    missing = []
+    for section in ISSUE_TEMPLATE_SECTIONS:
+        if (
+            re.search(
+                r"^#{3,5}\s*%s\s*$" % section,
+                obj.body,
+                flags=re.IGNORECASE | re.DOTALL | re.MULTILINE,
+            )
+            is None
+        ):
+            missing.append(section)
+    if missing:
+        actions["to_label"].append("needs_template")
+        actions["to_label"].append("needs_info")
+        if last_boilerplate(obj, "issue_missing_data") is None:
+            with open(get_template_path("issue_missing_data")) as f:
+                actions["comments"].append(
+                    string.Template(f.read()).substitute(
+                        author=obj.author,
+                        obj_type=obj.__class__.__name__,
+                        missing_sections="\n".join((f"- {s}" for s in missing)),
+                    )
+                )
+    else:
+        actions["to_unlabel"].append("needs_template")
+        if not [
+            e
+            for e in obj.events
+            if e["name"] == "LabeledEvent"
+            and e["label"] == "needs_info"
+            and e["author"] != "ansibot"
+        ] and "needs_info" not in ctx["commands_found"]:
+            actions["to_unlabel"].append("needs_info")
+
+
 bot_funcs = [
     match_components,  # must be executed first, other funcs use detected components
     resolved_by_pr,
@@ -1164,6 +1217,7 @@ bot_funcs = [
     pr_from_upstream,
     bad_pr,
     linked_objs,
+    needs_template,
 ]
 
 
