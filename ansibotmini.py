@@ -9,6 +9,7 @@ import base64
 import collections
 import concurrent.futures
 import configparser
+import dataclasses
 import datetime
 import hashlib
 import io
@@ -378,6 +379,15 @@ class CI:
 class Command:
     updated_at: datetime.datetime
     arg: t.Optional[str] = None
+
+
+@dataclass
+class Actions:
+    to_label: list[str] = dataclasses.field(default_factory=list)
+    to_unlabel: list[str] = dataclasses.field(default_factory=list)
+    comments: list[str] = dataclasses.field(default_factory=list)
+    cancel_ci: bool = False
+    close: bool = False
 
 
 GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
@@ -750,19 +760,15 @@ def days_since(when: datetime.datetime) -> int:
     return (datetime.datetime.now(datetime.timezone.utc) - when).days
 
 
-def resolved_by_pr(
-    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
-) -> None:
+def resolved_by_pr(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if commands := ctx["commands_found"].get("resolved_by_pr"):
         if all(
             get_pr_state(int(command.arg)).lower() == "merged" for command in commands
         ):
-            actions["close"] = True
+            actions.close = True
 
 
-def match_components(
-    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
-) -> None:
+def match_components(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     existing_components = []
     if isinstance(obj, PR):
         existing_components = obj.files
@@ -796,7 +802,7 @@ def match_components(
         if post_comment:
             entries = [f"* `{component}`" for component in existing_components]
             with open(get_template_path("components_banner")) as f:
-                actions["comments"].append(
+                actions.comments.append(
                     string.Template(f.read()).substitute(
                         components="\n".join(entries) if entries else None
                     )
@@ -872,13 +878,13 @@ def match_components(
                         f"({GALAXY_URL}{collection_info['namespace']}.{collection_info['name']})"
                     )
                 with open(get_template_path("collection_redirect")) as f:
-                    actions["comments"].append(
+                    actions.comments.append(
                         string.Template(f.read()).substitute(
                             components="\n".join(assembled_entries)
                         )
                     )
-                actions["to_label"].append("bot_closed")
-                actions["close"] = True
+                actions.to_label.append("bot_closed")
+                actions.close = True
 
     obj.components = existing_components
 
@@ -887,45 +893,45 @@ def match_components(
     )
 
 
-def needs_triage(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+def needs_triage(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if not any(
         e
         for e in obj.events
         if e["name"] == "LabeledEvent" and e["label"] in ("needs_triage", "triage")
     ):
-        actions["to_label"].append("needs_triage")
+        actions.to_label.append("needs_triage")
 
 
 def waiting_on_contributor(
-    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
+    obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]
 ) -> None:
     if "waiting_on_contributor" in ctx["commands_found"]:
-        actions["to_label"].append("waiting_on_contributor")
+        actions.to_label.append("waiting_on_contributor")
     if (
         "waiting_on_contributor" in obj.labels
         and days_since(last_labeled(obj, "waiting_on_contributor"))
         > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
     ):
-        actions["close"] = True
-        actions["to_label"].append("bot_closed")
-        actions["to_unlabel"].append("waiting_on_contributor")
+        actions.close = True
+        actions.to_label.append("bot_closed")
+        actions.to_unlabel.append("waiting_on_contributor")
         with open(get_template_path("waiting_on_contributor")) as f:
-            actions["comments"].append(f.read())
+            actions.comments.append(f.read())
 
 
-def needs_info(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+def needs_info(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if "needs_info" in ctx["commands_found"]:
-        actions["to_label"].append("needs_info")
+        actions.to_label.append("needs_info")
 
-    if "needs_info" in obj.labels or "needs_info" in actions["to_label"]:
+    if "needs_info" in obj.labels or "needs_info" in actions.to_label:
         labeled_datetime = last_labeled(obj, "needs_info")
         commented_datetime = last_commented_by(obj, obj.author)
         if commented_datetime is None or labeled_datetime > commented_datetime:
             days_labeled = days_since(labeled_datetime)
             if days_labeled > NEEDS_INFO_CLOSE_DAYS:
-                actions["close"] = True
+                actions.close = True
                 with open(get_template_path("needs_info_close")) as f:
-                    actions["comments"].append(
+                    actions.comments.append(
                         string.Template(f.read()).substitute(
                             author=obj.author, object_type=obj.__class__.__name__
                         )
@@ -934,36 +940,32 @@ def needs_info(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) ->
                 last_warned = last_boilerplate(obj, "needs_info_warn")
                 if last_warned is None or last_warned["created_at"] < labeled_datetime:
                     with open(get_template_path("needs_info_warn")) as f:
-                        actions["comments"].append(
+                        actions.comments.append(
                             string.Template(f.read()).substitute(
                                 author=obj.author,
                                 object_type=obj.__class__.__name__,
                             )
                         )
         else:
-            if "needs_info" in actions["to_label"]:
-                actions["to_label"].remove("needs_info")
-            actions["to_unlabel"].append("needs_info")
+            if "needs_info" in actions.to_label:
+                actions.to_label.remove("needs_info")
+            actions.to_unlabel.append("needs_info")
 
 
-def match_object_type(
-    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
-) -> None:
+def match_object_type(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if match := OBJ_TYPE_RE.search(obj.body):
         data = re.sub(r"~[^~]+~", "", match.group(1).lower())
         if "feature" in data:
-            actions["to_label"].append("feature")
+            actions.to_label.append("feature")
         if "bug" in data:
-            actions["to_label"].append("bug")
+            actions.to_label.append("bug")
         if "documentation" in data or "docs" in data:
-            actions["to_label"].append("docs")
+            actions.to_label.append("docs")
         if "test" in data:
-            actions["to_label"].append("test")
+            actions.to_label.append("test")
 
 
-def match_version(
-    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
-) -> None:
+def match_version(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if match := VERSION_RE.search(obj.body):
         label_name = f"affects_{'.'.join(match.group(1).split('.')[:2])}"
         if not any(
@@ -973,17 +975,17 @@ def match_version(
             and e["author"] in ctx["committers"]
             and e["label"] == label_name
         ):
-            actions["to_label"].append(label_name)
+            actions.to_label.append(label_name)
 
 
-def ci_comments(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+def ci_comments(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR) or obj.ci is None:
         return
     resp = http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id)
     if resp.status_code == 404:
         # not available anymore
         if obj.ci.conclusion == "success":
-            actions["to_unlabel"].append("ci_verified")
+            actions.to_unlabel.append("ci_verified")
         return
     failed_job_ids = [
         r["id"]
@@ -991,7 +993,7 @@ def ci_comments(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -
         if r["type"] == "Job" and r["result"] == "failed"
     ]
     if not failed_job_ids:
-        actions["to_unlabel"].append("ci_verified")
+        actions.to_unlabel.append("ci_verified")
         return
     ci_comment = []
     ci_verifieds = []
@@ -1021,7 +1023,7 @@ def ci_comments(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -
             and f"<!-- r_hash: {r_hash} -->" in e["body"]
         ):
             with open(get_template_path("ci_test_results")) as f:
-                actions["comments"].append(
+                actions.comments.append(
                     string.Template(f.read()).substitute(
                         results=results,
                         r_hash=r_hash,
@@ -1029,99 +1031,93 @@ def ci_comments(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -
                 )
     # ci_verified
     if all(ci_verifieds) and len(ci_verifieds) == len(failed_job_ids):
-        actions["to_label"].append("ci_verified")
+        actions.to_label.append("ci_verified")
     else:
-        actions["to_unlabel"].append("ci_verified")
+        actions.to_unlabel.append("ci_verified")
 
 
-def needs_revision(
-    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
-) -> None:
+def needs_revision(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR) or obj.ci is None:
         return
     if obj.changes_requested or obj.ci.conclusion != "success":
-        actions["to_label"].append("needs_revision")
+        actions.to_label.append("needs_revision")
     else:
-        actions["to_unlabel"].append("needs_revision")
+        actions.to_unlabel.append("needs_revision")
 
 
-def needs_ci(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+def needs_ci(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR):
         return
     label = "needs_ci"
     if obj.ci is None or obj.ci.status != "completed":
         if "pre_azp" not in obj.labels:
-            actions["to_label"].append(label)
+            actions.to_label.append(label)
     else:
-        actions["to_unlabel"].append(label)
-        actions["to_unlabel"].append("pre_azp")
+        actions.to_unlabel.append(label)
+        actions.to_unlabel.append("pre_azp")
 
 
-def stale_ci(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+def stale_ci(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR) or obj.ci is None:
         return
     if days_since(obj.ci.updated_at) > STALE_CI_DAYS:
-        actions["to_label"].append("stale_ci")
+        actions.to_label.append("stale_ci")
     else:
-        actions["to_unlabel"].append("stale_ci")
+        actions.to_unlabel.append("stale_ci")
 
 
-def docs_only(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+def docs_only(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR):
         return
     if all(c.startswith("docs/") for c in obj.components):
-        actions["to_label"].append("docs_only")
+        actions.to_label.append("docs_only")
         if last_boilerplate(obj, "docs_team_info") is None:
             with open(get_template_path("docs_team_info")) as f:
-                actions["comments"].append(f.read())
+                actions.comments.append(f.read())
 
 
-def backport(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+def backport(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR):
         return
     if obj.branch.startswith("stable-"):
-        actions["to_label"].append("backport")
+        actions.to_label.append("backport")
     else:
-        actions["to_unlabel"].append("backport")
+        actions.to_unlabel.append("backport")
 
 
-def is_module(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+def is_module(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if any(c.startswith("lib/ansible/modules/") for c in obj.components):
-        actions["to_label"].append("module")
+        actions.to_label.append("module")
     else:
-        actions["to_unlabel"].append("module")
+        actions.to_unlabel.append("module")
 
 
-def needs_rebase(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+def needs_rebase(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR):
         return
     if obj.mergeable == "conflicting":
-        actions["to_label"].append("needs_rebase")
+        actions.to_label.append("needs_rebase")
     else:
-        actions["to_unlabel"].append("needs_rebase")
+        actions.to_unlabel.append("needs_rebase")
 
 
-def stale_review(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+def stale_review(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR) or obj.last_review is None:
         return
     if obj.last_review < obj.last_commit:
-        actions["to_label"].append("stale_review")
+        actions.to_label.append("stale_review")
     else:
-        actions["to_unlabel"].append("stale_review")
+        actions.to_unlabel.append("stale_review")
 
 
-def pr_from_upstream(
-    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
-) -> None:
+def pr_from_upstream(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR) or obj.from_repo != "ansible/ansible":
         return
-    actions["close"] = True
+    actions.close = True
     with open(get_template_path("pr_from_upstream")) as f:
-        actions["comments"].append(
-            string.Template(f.read()).substitute(author=obj.author)
-        )
+        actions.comments.append(string.Template(f.read()).substitute(author=obj.author))
     if obj.ci is not None:
-        actions["cancel_ci"] = True
+        actions.cancel_ci = True
 
 
 def cancel_ci(build_id: int) -> None:
@@ -1140,29 +1136,27 @@ def cancel_ci(build_id: int) -> None:
     logging.info("Cancelled with status_code: %d", resp.status_code)
 
 
-def bad_pr(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+def bad_pr(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, PR):
         return
     if obj.merge_commit:
-        actions["cancel_ci"] = True
+        actions.cancel_ci = True
 
 
-def linked_objs(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+def linked_objs(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if isinstance(obj, PR):
         if obj.has_issue:
-            actions["to_label"].append("has_issue")
+            actions.to_label.append("has_issue")
         else:
-            actions["to_unlabel"].append("has_issue")
+            actions.to_unlabel.append("has_issue")
     elif isinstance(obj, Issue):
         if [e for e in obj.events if e["name"] == "CrossReferencedEvent"]:
-            actions["to_label"].append("has_pr")
+            actions.to_label.append("has_pr")
         else:
-            actions["to_unlabel"].append("has_pr")
+            actions.to_unlabel.append("has_pr")
 
 
-def needs_template(
-    obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]
-) -> None:
+def needs_template(obj: GH_OBJ, actions: Actions, ctx: dict[str, t.Any]) -> None:
     if not isinstance(obj, Issue):
         return
     missing = []
@@ -1177,11 +1171,11 @@ def needs_template(
         ):
             missing.append(section)
     if missing:
-        actions["to_label"].append("needs_template")
-        actions["to_label"].append("needs_info")
+        actions.to_label.append("needs_template")
+        actions.to_label.append("needs_info")
         if last_boilerplate(obj, "issue_missing_data") is None:
             with open(get_template_path("issue_missing_data")) as f:
-                actions["comments"].append(
+                actions.comments.append(
                     string.Template(f.read()).substitute(
                         author=obj.author,
                         obj_type=obj.__class__.__name__,
@@ -1189,15 +1183,18 @@ def needs_template(
                     )
                 )
     else:
-        actions["to_unlabel"].append("needs_template")
-        if not [
-            e
-            for e in obj.events
-            if e["name"] == "LabeledEvent"
-            and e["label"] == "needs_info"
-            and e["author"] != BOT_ACCOUNT
-        ] and "needs_info" not in ctx["commands_found"]:
-            actions["to_unlabel"].append("needs_info")
+        actions.to_unlabel.append("needs_template")
+        if (
+            not [
+                e
+                for e in obj.events
+                if e["name"] == "LabeledEvent"
+                and e["label"] == "needs_info"
+                and e["author"] != BOT_ACCOUNT
+            ]
+            and "needs_info" not in ctx["commands_found"]
+        ):
+            actions.to_unlabel.append("needs_info")
 
 
 bot_funcs = [
@@ -1232,13 +1229,6 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
     }
     for obj in objects.values():
         logging.info(f"Triaging {obj.__class__.__name__} {obj.title} (#{obj.number})")
-        actions = {
-            "to_label": [],
-            "to_unlabel": [],
-            "comments": [],
-            "cancel_ci": False,
-            "close": False,
-        }
         # commands
         bodies = itertools.chain(
             ((obj.body, obj.updated_at),),
@@ -1288,34 +1278,33 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
             continue
 
         # triage
+        actions = Actions()
         for f in bot_funcs:
             f(obj, actions, ctx)
 
         logging.debug(pprint.pformat(actions))
-        actions["to_label"] = [l for l in actions["to_label"] if l not in obj.labels]
-        actions["to_unlabel"] = [l for l in actions["to_unlabel"] if l in obj.labels]
+        actions.to_label = [l for l in actions.to_label if l not in obj.labels]
+        actions.to_unlabel = [l for l in actions.to_unlabel if l in obj.labels]
 
-        if common_labels := set(actions["to_label"]).intersection(
-            actions["to_unlabel"]
-        ):
+        if common_labels := set(actions.to_label).intersection(actions.to_unlabel):
             raise AssertionError(
                 f"The following labels were scheduled to be both added and removed {', '.join(common_labels)}"
             )
 
         logging.info(pprint.pformat(actions))
         if not dry_run:
-            if actions["to_label"]:
-                add_labels(obj, actions["to_label"])
-            if actions["to_unlabel"]:
-                remove_labels(obj, actions["to_unlabel"])
+            if actions.to_label:
+                add_labels(obj, actions.to_label)
+            if actions.to_unlabel:
+                remove_labels(obj, actions.to_unlabel)
 
-            for comment in actions["comments"]:
+            for comment in actions.comments:
                 add_comment(obj, comment)
 
-            if actions["cancel_ci"]:
+            if actions.cancel_ci:
                 cancel_ci(obj.ci.build_id)
 
-            if actions["close"]:
+            if actions.close:
                 close_object(obj)
 
         logging.info(
