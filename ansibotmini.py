@@ -941,7 +941,8 @@ def needs_info(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) ->
                             )
                         )
         else:
-            actions["to_label"].remove("needs_info")
+            if "needs_info" in actions["to_label"]:
+                actions["to_label"].remove("needs_info")
             actions["to_unlabel"].append("needs_info")
 
 
