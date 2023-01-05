@@ -215,17 +215,6 @@ query($number: Int!)
           ... on CrossReferencedEvent {
             createdAt
             source {
-              ... on Issue {
-                number
-                repository {
-                  name
-                  owner {
-                    ... on Organization {
-                      name
-                    }
-                  }
-                }
-              }
               ... on PullRequest {
                 number
                 repository {
@@ -315,6 +304,11 @@ headRepository {
     login
   }
 }
+closingIssuesReferences(last: 1) {
+  nodes {
+    number
+  }
+}
 """,
 )
 
@@ -354,6 +348,7 @@ class PR(Issue):
     ci: CI | None
     from_repo: str
     merge_commit: bool
+    has_issue: bool
 
 
 @dataclass
@@ -1136,6 +1131,19 @@ def bad_pr(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> Non
         actions["cancel_ci"] = True
 
 
+def linked_objs(obj: GH_OBJ, actions: dict[str, t.Any], ctx: dict[str, t.Any]) -> None:
+    if isinstance(obj, PR):
+        if obj.has_issue:
+            actions["to_label"].append("has_issue")
+        else:
+            actions["to_unlabel"].append("has_issue")
+    elif isinstance(obj, Issue):
+        if [e for e in obj.events if e["name"] == "CrossReferencedEvent"]:
+            actions["to_label"].append("has_pr")
+        else:
+            actions["to_unlabel"].append("has_pr")
+
+
 bot_funcs = [
     match_components,  # must be executed first, other funcs use detected components
     resolved_by_pr,
@@ -1155,6 +1163,7 @@ bot_funcs = [
     stale_review,
     pr_from_upstream,
     bad_pr,
+    linked_objs,
 ]
 
 
@@ -1405,6 +1414,7 @@ def fetch_object(
         kwargs["merge_commit"] = any(
             len(n["commit"]["parents"]["nodes"]) > 1 for n in o["commits"]["nodes"]
         )
+        kwargs["has_issue"] = len(o["closingIssuesReferences"]["nodes"]) > 0
 
     return obj(**kwargs)
 
