@@ -1339,6 +1339,8 @@ def process_events(issue: dict[str, t.Any]) -> list[dict[str, str]]:
             event["owner"] = (
                 node["source"]["repository"].get("owner", {}).get("name", "")
             )
+        else:
+            continue
         rv.append(event)
 
     return rv
