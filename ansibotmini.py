@@ -941,6 +941,8 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     )
             elif days_labeled > NEEDS_INFO_WARN_DAYS:
                 last_warned = last_boilerplate(obj, "needs_info_warn")
+                if last_warned is None:
+                    last_warned = last_boilerplate(obj, "needs_info_base")
                 if last_warned is None or last_warned["created_at"] < labeled_datetime:
                     with open(get_template_path("needs_info_warn")) as f:
                         actions.comments.append(
