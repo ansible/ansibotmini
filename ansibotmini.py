@@ -1333,7 +1333,7 @@ def process_events(issue: dict[str, t.Any]) -> list[dict[str, str]]:
             event["author"] = (
                 node["author"]["login"] if node["author"] is not None else ""
             )
-        elif node["__typename"] == "CrossReferencedEvent":
+        elif node["__typename"] == "CrossReferencedEvent" and node["source"]:
             event["number"] = node["source"]["number"]
             event["repo"] = node["source"]["repository"]
             event["owner"] = (
