@@ -124,7 +124,6 @@ ISSUE_TEMPLATE_SECTIONS = frozenset(
         "Ansible Version",
         "Configuration",
         "OS / Environment",
-        "Code of Conduct",
     )
 )
 
