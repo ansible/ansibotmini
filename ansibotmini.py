@@ -1162,7 +1162,7 @@ def linked_objs(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, Issue):
+    if isinstance(obj, PR):
         return
     missing = []
     for section in ISSUE_TEMPLATE_SECTIONS:
