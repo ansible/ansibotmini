@@ -71,10 +71,10 @@ gh_token = config.get("default", "gh_token")
 azp_token = config.get("default", "azp_token")
 
 COMPONENT_RE = re.compile(
-    r"#{3,5}\scomponent\sname(.+?)(?=#{3,5})", flags=re.IGNORECASE | re.DOTALL
+    r"#{3,5}\scomponent\sname(.+?)(?=#{3,5}|$)", flags=re.IGNORECASE | re.DOTALL
 )
 OBJ_TYPE_RE = re.compile(
-    r"#{3,5}\sissue\stype(.+?)(?=#{3,5})", flags=re.IGNORECASE | re.DOTALL
+    r"#{3,5}\sissue\stype(.+?)(?=#{3,5}|$)", flags=re.IGNORECASE | re.DOTALL
 )
 VERSION_RE = re.compile(r"ansible\s\[core\s([^]]+)]")
 COMPONENT_COMMAND_RE = re.compile(
