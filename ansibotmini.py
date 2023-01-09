@@ -786,16 +786,22 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             existing_components = match_existing_components(processed_components)
 
         command_components = []
-        for component in ctx.commands_found.get("component", []):
-            path = component[1:]
-            command_components.append(component[1:])
-            if component.startswith("="):
-                existing_components = [path]
-            elif component.startswith("+"):
-                existing_components.append(path)
-            elif component.startswith("-"):
-                if path in existing_components:
-                    existing_components.remove(path)
+        for command in ctx.commands_found.get("component", []):
+            op, path = command.arg[0], command.arg[1:]
+            command_components.append(path)
+            match op:
+                case "=":
+                    existing_components = [path]
+                case "+":
+                    existing_components.append(path)
+                case "-":
+                    if path in existing_components:
+                        existing_components.remove(path)
+                case _:
+                    raise ValueError(
+                        f"Incorrect operation for the component command: {op}"
+                    )
+        # FIXME check whether command components are valid
 
         post_comment = True
         if (comment := last_boilerplate(obj, "components_banner")) is not None:
