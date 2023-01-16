@@ -11,6 +11,7 @@ import concurrent.futures
 import configparser
 import dataclasses
 import datetime
+import difflib
 import hashlib
 import io
 import itertools
@@ -394,6 +395,7 @@ class TriageContext:
     collections_list: dict[str, t.Any]
     collections_file_map: dict[str, t.Any]
     committers: list[str]
+    devel_file_list: list[str]
     commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
 
 
@@ -669,7 +671,7 @@ def process_component(data):
                         .replace(".ps1", "")
                     )
 
-                if c := re.sub(r"[^a-zA-Z/._-]", "", c):
+                if c := re.sub(r"[^1a-zA-Z/._-]", "", c):
                     if (
                         flatten := re.sub(
                             r"(lib/ansible/modules)/(.*)(/.+\.(?:py|ps1))", r"\1\3", c
@@ -686,46 +688,31 @@ def get_template_path(name: str) -> str:
     return os.path.join(os.path.dirname(__file__), "templates", f"{name}.tmpl")
 
 
-def match_existing_components(filenames: list[str]) -> list[str]:
+def match_existing_components(
+    filenames: list[str], existing_files: list[str]
+) -> list[str]:
     if not filenames:
         return []
-
-    query_fmt = """
-        {
-          repository(owner: "ansible", name: "ansible") {
-            %s
-          }
-        }
-    """
-    file_fmt = """
-        %s: object(expression: "HEAD:%s") {
-          ... on Blob {
-            byteSize
-          }
-        }
-    """
     paths = ["lib/ansible/modules/", "bin/", "lib/ansible/cli/"]
     paths.extend((f"lib/ansible/plugins/{name}/" for name in ANSIBLE_PLUGINS))
     files = []
-    component_to_path = {}
-    for i, filename in enumerate(filenames):
-        if "/" in filename:
-            query_name = f"file{i}"
-            files.append(file_fmt % (query_name, filename))
-            component_to_path[query_name] = filename
-        else:
-            for j, path in enumerate(paths):
-                query_name = f"file{i}{j}"
-                fname = f"{path}{filename}.py"
-                files.append(file_fmt % (query_name, fname))
-                component_to_path[query_name] = fname
+    for filename in filenames:
+        files.append(filename)
+        if "/" not in filename:
+            for path in paths:
+                files.append(f"{path}{filename}.py")
+                files.append(f"{path}{filename}")
 
-    resp = send_query(json.dumps({"query": query_fmt % " ".join(files)}))
-    return [
-        component_to_path[file]
-        for file, res in resp.json()["data"]["repository"].items()
-        if res is not None
-    ]
+    components = [f for f in files if f in existing_files]
+
+    if not components:
+        # FIXME should we fallback to this?
+        for file in filenames:
+            components.extend(
+                difflib.get_close_matches(file, existing_files, cutoff=0.85)
+            )
+
+    return list(set(components))
 
 
 def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
@@ -783,7 +770,9 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         processed_components = []
         if match := COMPONENT_RE.search(obj.body):
             processed_components = process_component(match.group(1))
-            existing_components = match_existing_components(processed_components)
+            existing_components = match_existing_components(
+                processed_components, ctx.devel_file_list
+            )
 
         command_components = []
         for command in ctx.commands_found.get("component", []):
@@ -1176,7 +1165,7 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             re.search(
                 r"^#{3,5}\s*%s\s*$" % section,
                 obj.body,
-                flags=re.IGNORECASE | re.DOTALL | re.MULTILINE,
+                flags=re.IGNORECASE | re.MULTILINE,
             )
             is None
         ):
@@ -1233,10 +1222,19 @@ bot_funcs = [
 
 
 def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
+    devel_file_list = http_request(
+        "https://api.github.com/repos/ansible/ansible/git/trees/devel?recursive=1"
+    ).json()
+    devel_file_list = [e["path"] for e in devel_file_list["tree"]]
+    for f in list(devel_file_list):
+        if f.endswith("__init__.py"):
+            devel_file_list.append(os.path.dirname(f))
+
     ctx = TriageContext(
         collections_list=http_request(COLLECTIONS_LIST_ENDPOINT).json(),
         collections_file_map=http_request(COLLECTIONS_FILEMAP_ENDPOINT).json(),
         committers=get_committers(),
+        devel_file_list=devel_file_list,
     )
     for obj in objects.values():
         logging.info(f"Triaging {obj.__class__.__name__} {obj.title} (#{obj.number})")
