@@ -388,6 +388,7 @@ class Actions:
     comments: list[str] = dataclasses.field(default_factory=list)
     cancel_ci: bool = False
     close: bool = False
+    close_reason: str = "COMPLETED"
 
 
 @dataclass
@@ -543,7 +544,7 @@ def add_comment(obj: GH_OBJ, body: str) -> None:
     )
 
 
-def close_issue(obj_id: str) -> None:
+def close_issue(obj_id: str, reason: str) -> None:
     query = """
     mutation($input: CloseIssueInput!) {
       closeIssue(input:$input) {
@@ -558,6 +559,7 @@ def close_issue(obj_id: str) -> None:
                 "variables": {
                     "input": {
                         "issueId": obj_id,
+                        "stateReason": reason,
                     },
                 },
             }
@@ -585,14 +587,6 @@ def close_pr(obj_id: str) -> None:
             }
         )
     )
-
-
-def close_object(obj: GH_OBJ) -> None:
-    logging.info(f"{obj.__class__.__name__} #{obj.number}: closing")
-    if isinstance(obj, Issue):
-        close_issue(obj.id)
-    elif isinstance(obj, PR):
-        close_pr(obj.id)
 
 
 def get_pr_state(number: int) -> str:
@@ -885,6 +879,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     )
                 actions.to_label.append("bot_closed")
                 actions.close = True
+                actions.close_reason = "NOT_PLANNED"
 
     obj.components = existing_components
 
@@ -911,6 +906,7 @@ def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) ->
         > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
     ):
         actions.close = True
+        actions.close_reason = "NOT_PLANNED"
         actions.to_label.append("bot_closed")
         actions.to_unlabel.append("waiting_on_contributor")
         with open(get_template_path("waiting_on_contributor")) as f:
@@ -928,6 +924,7 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             days_labeled = days_since(labeled_datetime)
             if days_labeled > NEEDS_INFO_CLOSE_DAYS:
                 actions.close = True
+                actions.close_reason = "NOT_PLANNED"
                 with open(get_template_path("needs_info_close")) as f:
                     actions.comments.append(
                         string.Template(f.read()).substitute(
@@ -1314,7 +1311,11 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 cancel_ci(obj.ci.build_id)
 
             if actions.close:
-                close_object(obj)
+                logging.info(f"{obj.__class__.__name__} #{obj.number}: closing")
+                if isinstance(obj, PR):
+                    close_pr(obj.id)
+                elif isinstance(obj, Issue):
+                    close_issue(obj.id, actions.close_reason)
 
         logging.info(
             f"Done triaging {obj.__class__.__name__} {obj.title} (#{obj.number})"
