@@ -117,14 +117,22 @@ ANSIBLE_PLUGINS = frozenset(
 )
 
 # TODO fetch from the actual template
-ISSUE_TEMPLATE_SECTIONS = frozenset(
+ISSUE_FEATURE_TEMPLATE_SECTIONS = frozenset(
     (
         "Summary",
         "Issue Type",
         "Component Name",
-        "Ansible Version",
-        "Configuration",
-        "OS / Environment",
+    )
+)
+
+ISSUE_BUG_TEMPLATE_SECTIONS = frozenset(
+    itertools.chain(
+        ISSUE_FEATURE_TEMPLATE_SECTIONS,
+        (
+            "Ansible Version",
+            "Configuration",
+            "OS / Environment",
+        ),
     )
 )
 
@@ -1158,7 +1166,11 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if isinstance(obj, PR):
         return
     missing = []
-    for section in ISSUE_TEMPLATE_SECTIONS:
+    if "bug" in actions.to_label:
+        sections = ISSUE_BUG_TEMPLATE_SECTIONS
+    else:
+        sections = ISSUE_FEATURE_TEMPLATE_SECTIONS
+    for section in sections:
         if (
             re.search(
                 r"^#{3,5}\s*%s\s*$" % section,
@@ -1196,12 +1208,12 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 bot_funcs = [
-    match_components,  # must be executed first, other funcs use detected components
+    match_components,  # order matters, other funcs use detected components
+    match_object_type,  # order matters, other funcs use detected object type
     resolved_by_pr,
     needs_triage,
     waiting_on_contributor,
     needs_info,
-    match_object_type,
     match_version,
     ci_comments,
     needs_revision,
