@@ -910,7 +910,9 @@ def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) ->
 
 
 def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    needs_info_dates = [command.updated_at for command in ctx.commands_found.get("needs_info", [])]
+    needs_info_dates = [
+        command.updated_at for command in ctx.commands_found.get("needs_info", [])
+    ]
     if "needs_info" in obj.labels:
         needs_info_dates.append(last_labeled(obj, "needs_info"))
 
