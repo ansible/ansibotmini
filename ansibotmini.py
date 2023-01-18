@@ -66,10 +66,6 @@ SLEEP_SECONDS = 300
 
 CONFIG_FILENAME = os.path.expanduser("~/.ansibotmini.cfg")
 CACHE_FILENAME = os.path.expanduser("~/.ansibotmini_cache")
-config = configparser.ConfigParser()
-config.read(CONFIG_FILENAME)
-gh_token = config.get("default", "gh_token")
-azp_token = config.get("default", "azp_token")
 
 COMPONENT_RE = re.compile(
     r"#{3,5}\scomponent\sname(.+?)(?=#{3,5}|$)", flags=re.IGNORECASE | re.DOTALL
@@ -922,7 +918,9 @@ def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) ->
 
 
 def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    needs_info_dates = [command.updated_at for command in ctx.commands_found.get("needs_info", [])]
+    needs_info_dates = [
+        command.updated_at for command in ctx.commands_found.get("needs_info", [])
+    ]
     if "needs_info" in obj.labels:
         needs_info_dates.append(last_labeled(obj, "needs_info"))
 
@@ -1572,7 +1570,12 @@ def daemon(dry_run: t.Optional = None) -> None:
         time.sleep(SLEEP_SECONDS)
 
 
+gh_token = azp_token = None
+
+
 def main() -> None:
+    global gh_token, azp_token
+
     parser = argparse.ArgumentParser(
         prog="ansibotmini",
         description="Triages github.com/ansible/ansible issues and PRs",
@@ -1587,6 +1590,12 @@ def main() -> None:
         level=logging.DEBUG if args.debug else logging.INFO,
         stream=sys.stderr,
     )
+
+    config = configparser.ConfigParser()
+    config.read(CONFIG_FILENAME)
+    gh_token = config.get("default", "gh_token")
+    azp_token = config.get("default", "azp_token")
+
     if args.number:
         obj = fetch_object_by_number(args.number)
         triage({args.number: obj}, dry_run=args.dry_run)
