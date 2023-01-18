@@ -914,14 +914,15 @@ def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) ->
 
 
 def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if "needs_info" in ctx.commands_found:
-        actions.to_label.append("needs_info")
+    needs_info_dates = [command.updated_at for command in ctx.commands_found.get("needs_info", [])]
+    if "needs_info" in obj.labels:
+        needs_info_dates.append(last_labeled(obj, "needs_info"))
 
-    if "needs_info" in obj.labels or "needs_info" in actions.to_label:
-        labeled_datetime = last_labeled(obj, "needs_info")
+    needs_info_date = max(needs_info_dates, default=None)
+    if needs_info_date:
         commented_datetime = last_commented_by(obj, obj.author)
-        if commented_datetime is None or labeled_datetime > commented_datetime:
-            days_labeled = days_since(labeled_datetime)
+        if commented_datetime is None or needs_info_date > commented_datetime:
+            days_labeled = days_since(needs_info_date)
             if days_labeled > NEEDS_INFO_CLOSE_DAYS:
                 actions.close = True
                 actions.close_reason = "NOT_PLANNED"
@@ -935,7 +936,7 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 last_warned = last_boilerplate(obj, "needs_info_warn")
                 if last_warned is None:
                     last_warned = last_boilerplate(obj, "needs_info_base")
-                if last_warned is None or last_warned["created_at"] < labeled_datetime:
+                if last_warned is None or last_warned["created_at"] < needs_info_date:
                     with open(get_template_path("needs_info_warn")) as f:
                         actions.comments.append(
                             string.Template(f.read()).substitute(
