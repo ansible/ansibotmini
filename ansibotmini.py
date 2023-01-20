@@ -808,73 +808,28 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     )
                 )
 
-        if "!needs_collection_redirect" not in ctx.commands_found:
-            entries = []
-            # components such as namespace.collection_name.plugin_name
-            for component in processed_components:
-                fqcn = component.split(".")
-                if len(fqcn) != 3:
-                    continue
-                if collection_data := ctx.collections_list.get(".".join(fqcn[:2])):
-                    entries.append(
-                        (
-                            component,
-                            collection_data["manifest"]["collection_info"],
-                        )
-                    )
-
-            for component in itertools.chain(processed_components, command_components):
-                if "/" not in component:
-                    continue
-                # TODO all plugins
-                flatten = re.sub(
-                    r"lib/ansible/(plugins/connection)/(.*)(/.+\.(?:py|ps1))",
-                    r"\1\3",
-                    component,
-                ).replace("lib/ansible/", "")
-                for fqcn in ctx.collections_file_map.get(flatten, []):
-                    entries.append(
-                        (
-                            component,
-                            ctx.collections_list[fqcn]["manifest"]["collection_info"],
-                        )
-                    )
-                if entries:
-                    break
-            else:
-                for candidate in [
-                    f"plugins/{plugin_type}/{component}.{ext}"
-                    for component, plugin_type, ext in itertools.product(
-                        (c for c in processed_components if "/" not in c),
-                        (itertools.chain(ANSIBLE_PLUGINS, ["modules"])),
-                        ("py", "ps1"),
-                    )
-                ]:
-                    for fqcn in ctx.collections_file_map.get(candidate, []):
-                        entries.append(
-                            (
-                                candidate,
-                                ctx.collections_list[fqcn]["manifest"][
-                                    "collection_info"
-                                ],
-                            )
-                        )
-
-            if entries:
-                if len(entries) > 1:
-                    entries = list(
-                        filter(
-                            lambda x: x[1]["namespace"] in x[1]["repository"]
-                            and x[1]["name"] in x[1]["repository"],
-                            entries,
-                        )
-                    )
+        if (
+            not existing_components
+            and "!needs_collection_redirect" not in ctx.commands_found
+        ):
+            if entries := is_in_collection(
+                command_components, processed_components, ctx
+            ):
                 assembled_entries = []
-                for candidate, collection_info in entries:
-                    assembled_entries.append(
-                        f"* {candidate} -> {collection_info['repository']} "
-                        f"({GALAXY_URL}{collection_info['namespace']}.{collection_info['name']})"
-                    )
+                for component, fqcns in entries.items():
+                    for fqcn in fqcns:
+                        collection_info = ctx.collections_list[fqcn]["manifest"][
+                            "collection_info"
+                        ]
+                        if (
+                            collection_info["namespace"]
+                            in collection_info["repository"]
+                            and collection_info["name"] in collection_info["repository"]
+                        ):
+                            assembled_entries.append(
+                                f"* {component} -> {collection_info['repository']} ({GALAXY_URL}{collection_info['namespace']}.{collection_info['name']})"
+                            )
+
                 with open(get_template_path("collection_redirect")) as f:
                     actions.comments.append(
                         string.Template(f.read()).substitute(
@@ -890,6 +845,43 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     logging.info(
         f"{obj.__class__.__name__} #{obj.number}: identified components: {', '.join(obj.components)}"
     )
+
+
+def is_in_collection(
+    command_components: list[str], processed_components: list[str], ctx: TriageContext
+) -> dict[str, list[str]]:
+    entries = collections.defaultdict(list)
+
+    for component in processed_components:
+        fqcn = component.split(".")
+        if len(fqcn) != 3:
+            continue
+        fqcn = ".".join(fqcn[:2])
+        if fqcn in ctx.collections_list:
+            entries[component].append(fqcn)
+
+    for component in itertools.chain(processed_components, command_components):
+        if "/" not in component:
+            continue
+        flatten = re.sub(
+            rf"lib/ansible/(?:plugins/)?({'|'.join(itertools.chain(ANSIBLE_PLUGINS, ['modules']))})(.*)/(.+\.(?:py|ps1))",
+            r"plugins/\1/\3",
+            component,
+        )
+        for fqcn in ctx.collections_file_map.get(flatten, []):
+            entries[flatten].append(fqcn)
+        if entries:
+            break  # FIXME ignore others?
+    else:
+        for component, plugin_type, ext in itertools.product(
+            (c for c in processed_components if "/" not in c),
+            (itertools.chain(ANSIBLE_PLUGINS, ["modules"])),
+            ("py", "ps1"),
+        ):
+            candidate = f"plugins/{plugin_type}/{component}.{ext}"
+            for fqcn in ctx.collections_file_map.get(candidate, []):
+                entries[candidate].append(fqcn)
+    return entries
 
 
 def needs_triage(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
