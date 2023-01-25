@@ -56,6 +56,7 @@ COLLECTIONS_LIST_ENDPOINT = "https://sivel.eng.ansible.com/api/v1/collections/li
 COLLECTIONS_FILEMAP_ENDPOINT = (
     "https://sivel.eng.ansible.com/api/v1/collections/file_map"
 )
+COLLECTIONS_TO_REDIRECT_ENDPOINT = "https://raw.githubusercontent.com/ansible-community/ansible-build-data/main/7/ansible.in"
 
 STALE_CI_DAYS = 7
 STALE_ISSUE_DAYS = 7
@@ -401,6 +402,7 @@ class TriageContext:
     collections_file_map: dict[str, t.Any]
     committers: list[str]
     devel_file_list: list[str]
+    collections_to_redirect: list[str]
     commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
 
 
@@ -857,7 +859,7 @@ def is_in_collection(
         if len(fqcn) != 3:
             continue
         fqcn = ".".join(fqcn[:2])
-        if fqcn in ctx.collections_list:
+        if fqcn in ctx.collections_list and fqcn in ctx.collections_to_redirect:
             entries[component].append(fqcn)
 
     for component in itertools.chain(processed_components, command_components):
@@ -869,7 +871,8 @@ def is_in_collection(
             component,
         )
         for fqcn in ctx.collections_file_map.get(flatten, []):
-            entries[flatten].append(fqcn)
+            if fqcn in ctx.collections_to_redirect:
+                entries[flatten].append(fqcn)
         if entries:
             break  # FIXME ignore others?
     else:
@@ -880,7 +883,8 @@ def is_in_collection(
         ):
             candidate = f"plugins/{plugin_type}/{component}.{ext}"
             for fqcn in ctx.collections_file_map.get(candidate, []):
-                entries[candidate].append(fqcn)
+                if fqcn in ctx.collections_to_redirect:
+                    entries[candidate].append(fqcn)
     return entries
 
 
@@ -1234,6 +1238,9 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         collections_list=http_request(COLLECTIONS_LIST_ENDPOINT).json(),
         collections_file_map=http_request(COLLECTIONS_FILEMAP_ENDPOINT).json(),
         committers=get_committers(),
+        collections_to_redirect=http_request(COLLECTIONS_TO_REDIRECT_ENDPOINT)
+        .raw_data.decode()
+        .splitlines(),
         devel_file_list=devel_file_list,
     )
     for obj in objects.values():

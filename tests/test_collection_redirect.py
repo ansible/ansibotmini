@@ -19,6 +19,11 @@ def ctx():
         collections_file_map=collections_file_map,
         committers=[],
         devel_file_list=[],
+        collections_to_redirect=[
+            "ansible.posix",
+            "community.general",
+            "community.vmware",
+        ],
     )
 
 
