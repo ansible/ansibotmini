@@ -57,6 +57,7 @@ COLLECTIONS_FILEMAP_ENDPOINT = (
     "https://sivel.eng.ansible.com/api/v1/collections/file_map"
 )
 COLLECTIONS_TO_REDIRECT_ENDPOINT = "https://raw.githubusercontent.com/ansible-community/ansible-build-data/main/7/ansible.in"
+DEVEL_FILE_LIST = "https://api.github.com/repos/ansible/ansible/git/trees/devel?recursive=1"
 
 STALE_CI_DAYS = 7
 STALE_ISSUE_DAYS = 7
@@ -1226,10 +1227,7 @@ bot_funcs = [
 
 
 def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
-    devel_file_list = http_request(
-        "https://api.github.com/repos/ansible/ansible/git/trees/devel?recursive=1"
-    ).json()
-    devel_file_list = [e["path"] for e in devel_file_list["tree"]]
+    devel_file_list = [e["path"] for e in http_request(DEVEL_FILE_LIST).json()["tree"]]
     for f in list(devel_file_list):
         if f.endswith("__init__.py"):
             devel_file_list.append(os.path.dirname(f))
