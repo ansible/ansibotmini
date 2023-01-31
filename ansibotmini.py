@@ -57,7 +57,9 @@ COLLECTIONS_FILEMAP_ENDPOINT = (
     "https://sivel.eng.ansible.com/api/v1/collections/file_map"
 )
 COLLECTIONS_TO_REDIRECT_ENDPOINT = "https://raw.githubusercontent.com/ansible-community/ansible-build-data/main/7/ansible.in"
-DEVEL_FILE_LIST = "https://api.github.com/repos/ansible/ansible/git/trees/devel?recursive=1"
+DEVEL_FILE_LIST = (
+    "https://api.github.com/repos/ansible/ansible/git/trees/devel?recursive=1"
+)
 
 STALE_CI_DAYS = 7
 STALE_ISSUE_DAYS = 7
@@ -68,6 +70,7 @@ SLEEP_SECONDS = 300
 
 CONFIG_FILENAME = os.path.expanduser("~/.ansibotmini.cfg")
 CACHE_FILENAME = os.path.expanduser("~/.ansibotmini_cache")
+BYFILE_PAGE_FILENAME = os.path.expanduser("~/byfile.html")
 
 COMPONENT_RE = re.compile(
     r"#{3,5}\scomponent\sname(.+?)(?=#{3,5}|$)", flags=re.IGNORECASE | re.DOTALL
@@ -1541,7 +1544,7 @@ def fetch_objects() -> dict[str, GH_OBJ]:
             return data
 
 
-def daemon(dry_run: t.Optional = None) -> None:
+def daemon(dry_run: t.Optional = None, generate_byfile: t.Optional = None) -> None:
     global request_counter
     while True:
         request_counter = 0
@@ -1557,6 +1560,9 @@ def daemon(dry_run: t.Optional = None) -> None:
                 f"Took {time.time() - start:.2f} seconds to triage {len(objs)} issues/PRs"
                 f" and {request_counter} HTTP requests"
             )
+            if generate_byfile:
+                logging.info(f"Generating byfile.html")
+                generate_byfile_page()
         else:
             logging.info("No new issues/PRs")
             logging.info(
@@ -1580,6 +1586,7 @@ def main() -> None:
     parser.add_argument("--number", help="Github issue or pull request number")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--generate-byfile-page", action="store_true")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -1597,7 +1604,35 @@ def main() -> None:
         obj = fetch_object_by_number(args.number)
         triage({args.number: obj}, dry_run=args.dry_run)
     else:
-        daemon(dry_run=args.dry_run)
+        daemon(dry_run=args.dry_run, generate_byfile=args.generate_byfile_page)
+
+
+def generate_byfile_page():
+    with shelve.open(CACHE_FILENAME) as objs:
+        component_to_numbers = collections.defaultdict(list)
+        for obj in objs.values():
+            for component in obj.components:
+                component_to_numbers[component].append(obj)
+
+    data = []
+    for idx, (component, issues) in enumerate(
+        sorted(component_to_numbers.items(), key=lambda x: len(x[1]), reverse=True),
+        start=1,
+    ):
+        component_url = f"https://github.com/ansible/ansible/blob/devel/{component}"
+        data.append(
+            '<div style="background-color: #cfc; padding: 10px; border: 1px solid green;">\n'
+            f'{idx}. <a href="{component_url}">{component_url}</a> {len(issues)} total\n'
+            "</div><br />\n"
+        )
+        for obj in sorted(issues, key=lambda x: x.number):
+            otype = "pull" if isinstance(obj, PR) else "issues"
+            issue_url = f"https://github.com/ansible/ansible/{otype}/{obj.number}"
+            data.append(f'<a href="{issue_url}">{issue_url}</a>\t{obj.title}<br />\n')
+        data.append("<br />\n")
+
+    with open(BYFILE_PAGE_FILENAME, "w") as f:
+        f.write("".join(data))
 
 
 if __name__ == "__main__":
