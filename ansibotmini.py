@@ -1518,7 +1518,7 @@ def fetch_objects() -> dict[str, GH_OBJ]:
         if not number_map["issues"] and not number_map["prs"]:
             return {}
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
             for object_name, obj, data in (
                 ("issue", Issue, number_map["issues"]),
