@@ -1213,6 +1213,43 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             actions.to_unlabel.append("needs_info")
 
 
+def test_support_plugin(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+    if not isinstance(obj, PR):
+        return
+
+    data = []
+    for fn in obj.components:
+        if not fn.startswith("test/support/"):
+            continue
+
+        try:
+            plugin_path = fn.split("plugins/")[1]
+        except IndexError:
+            # not a plugin
+            continue
+
+        data.append(f"* `{fn}`")
+        if collection_names := [
+            cn
+            for cn in ctx.collections_file_map.get(f"plugins/{plugin_path}", [])
+            if cn in ctx.collections_to_redirect
+        ]:
+            data.append(
+                f"\t* Possible match in the following collections: {', '.join(collection_names)}"
+            )
+        else:
+            data.append("Could not find a match in collections.")
+
+    if data and last_boilerplate(obj, "test_support_plugins") is None:
+        with open(get_template_path("test_support_plugins")) as f:
+            actions.comments.append(
+                string.Template(f.read()).substitute(
+                    author=obj.author,
+                    data="\n".join(data),
+                )
+            )
+
+
 bot_funcs = [
     match_components,  # order matters, other funcs use detected components
     match_object_type,  # order matters, other funcs use detected object type
@@ -1234,6 +1271,7 @@ bot_funcs = [
     bad_pr,
     linked_objs,
     needs_template,
+    test_support_plugin,
 ]
 
 
