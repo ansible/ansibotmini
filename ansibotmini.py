@@ -676,16 +676,16 @@ def process_component(data):
                     )
 
                 if c := re.sub(r"[^1a-zA-Z/._-]", "", c):
-                    if (
-                        flatten := re.sub(
-                            r"(lib/ansible/modules)/(.*)(/.+\.(?:py|ps1))", r"\1\3", c
-                        )
-                    ) != c:
+                    if (flatten := flatten_module_path(c)) != c:
                         rv.append(flatten)
                     if len(c) > 1:
                         rv.append(c)
 
     return rv
+
+
+def flatten_module_path(c: str) -> str:
+    return re.sub(r"(lib/ansible/modules)/(.*)(/.+\.(?:py|ps1))", r"\1\3", c)
 
 
 def get_template_path(name: str) -> str:
@@ -769,7 +769,15 @@ def resolved_by_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     existing_components = []
     if isinstance(obj, PR):
-        existing_components = obj.files
+        # for old PRs that still touch unflatten modules
+        # FIXME remove this once such PRs are merged/closed/rebased
+        files = []
+        for fn in obj.files:
+            if fn not in ctx.devel_file_list and fn.startswith("lib/ansible/modules"):
+                files.append(flatten_module_path(fn))
+            else:
+                files.append(fn)
+        existing_components = files
     elif isinstance(obj, Issue):
         processed_components = []
         if match := COMPONENT_RE.search(obj.body):
