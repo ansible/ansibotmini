@@ -359,7 +359,7 @@ class Issue:
     labels: dict[str, str]
     updated_at: datetime.datetime
     components: list[str]
-    last_triaged: datetime.datetime
+    last_triaged: datetime.datetime | None
 
 
 @dataclass
@@ -1325,6 +1325,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
             > ctx.commands_found["!bot_skip"][-1].updated_at
         )
         if is_bot_broken:
+            obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
             logging.info(
                 f"Skipping {obj.__class__.__name__} {obj.title} (#{obj.number}) due to bot_broken"
             )
@@ -1335,6 +1336,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
             if not dry_run:
                 remove_labels(obj, ["bot_broken"])
         if is_bot_skip:
+            obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
             logging.info(
                 f"Skipping {obj.__class__.__name__} {obj.title} (#{obj.number}) due to bot_skip"
             )
@@ -1374,6 +1376,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 elif isinstance(obj, Issue):
                     close_issue(obj.id, actions.close_reason)
 
+        obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
         logging.info(
             f"Done triaging {obj.__class__.__name__} {obj.title} (#{obj.number})"
         )
@@ -1480,7 +1483,7 @@ def fetch_object(
         labels={node["name"]: node["id"] for node in o["labels"].get("nodes", [])},
         updated_at=updated_at,
         components=[],
-        last_triaged=datetime.datetime.now(datetime.timezone.utc),
+        last_triaged=None,
     )
     if object_name == "pullRequest":
         kwargs["branch"] = o["baseRef"]["name"]
@@ -1557,7 +1560,8 @@ def fetch_objects() -> dict[str, GH_OBJ]:
                     (number, updated_at)
                     for number, updated_at in future.result()
                     if number not in cache
-                    or cache[str(number)].updated_at < updated_at
+                    or cache[str(number)].last_triaged is None
+                    or cache[str(number)].last_triaged < updated_at
                     or days_since(cache[str(number)].last_triaged) >= STALE_ISSUE_DAYS
                 ]
 
@@ -1595,20 +1599,21 @@ def daemon(dry_run: t.Optional = None, generate_byfile: t.Optional = None) -> No
     while True:
         request_counter = 0
         start = time.time()
-        objs = fetch_objects()
-        if objs:
-            triage(objs, dry_run)
-            with shelve.open(CACHE_FILENAME) as cache:
-                for number, obj in objs.items():
-                    obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
-                    cache[str(number)] = obj
-            logging.info(
-                f"Took {time.time() - start:.2f} seconds to triage {len(objs)} issues/PRs"
-                f" and {request_counter} HTTP requests"
-            )
-            if generate_byfile:
-                logging.info(f"Generating byfile.html")
-                generate_byfile_page()
+        if objs := fetch_objects():
+            try:
+                triage(objs, dry_run)
+            finally:
+                logging.info("Caching triaged issues")
+                with shelve.open(CACHE_FILENAME) as cache:
+                    for number, obj in objs.items():
+                        cache[str(number)] = obj
+                logging.info(
+                    f"Took {time.time() - start:.2f} seconds to triage {len(objs)} issues/PRs"
+                    f" and {request_counter} HTTP requests"
+                )
+                if generate_byfile:
+                    logging.info(f"Generating byfile.html")
+                    generate_byfile_page()
         else:
             logging.info("No new issues/PRs")
             logging.info(
@@ -1650,7 +1655,10 @@ def main() -> None:
         obj = fetch_object_by_number(args.number)
         triage({args.number: obj}, dry_run=args.dry_run)
     else:
-        daemon(dry_run=args.dry_run, generate_byfile=args.generate_byfile_page)
+        try:
+            daemon(dry_run=args.dry_run, generate_byfile=args.generate_byfile_page)
+        except Exception as e:
+            logging.error(e)
 
 
 def generate_byfile_page():
