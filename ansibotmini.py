@@ -978,6 +978,8 @@ def match_object_type(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None
 
 
 def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+    if isinstance(obj, PR):
+        return
     if match := VERSION_RE.search(obj.body):
         label_name = f"affects_{'.'.join(match.group(1).split('.')[:2])}"
         if not any(
