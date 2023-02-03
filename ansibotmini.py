@@ -1155,6 +1155,9 @@ def bad_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         return
     if obj.merge_commit:
         actions.cancel_ci = True
+        actions.to_label.append("merge_commit")
+    else:
+        actions.to_unlabel.append("merge_commit")
 
 
 def linked_objs(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
