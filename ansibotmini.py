@@ -1681,8 +1681,16 @@ def main() -> None:
 
     config = configparser.ConfigParser()
     config.read(CONFIG_FILENAME)
-    gh_token = config.get("default", "gh_token")
-    azp_token = config.get("default", "azp_token")
+    try:
+        gh_token = config.get("default", "gh_token")
+        azp_token = config.get("default", "azp_token")
+    except (configparser.NoSectionError, configparser.NoOptionError) as e:
+        logging.error(
+            "Options 'gh_token' and 'azp_token' in the default section of the configuration file are required, "
+            "original error: %s",
+            e,
+        )
+        sys.exit(1)
 
     if args.number:
         obj = fetch_object_by_number(args.number)
@@ -1692,6 +1700,7 @@ def main() -> None:
             daemon(dry_run=args.dry_run, generate_byfile=args.generate_byfile_page)
         except Exception as e:
             logging.error(e)
+            sys.exit(1)
 
 
 def generate_byfile_page():
