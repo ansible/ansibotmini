@@ -401,7 +401,7 @@ class Actions:
     comments: list[str] = dataclasses.field(default_factory=list)
     cancel_ci: bool = False
     close: bool = False
-    close_reason: str = "COMPLETED"
+    close_reason: t.Optional[str] = None
 
 
 @dataclass
@@ -768,6 +768,7 @@ def resolved_by_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             get_pr_state(int(command.arg)).lower() == "merged" for command in commands
         ):
             actions.close = True
+            actions.close_reason = "COMPLETED"
 
 
 def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
@@ -944,6 +945,7 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             if days_labeled > NEEDS_INFO_CLOSE_DAYS:
                 actions.close = True
                 actions.close_reason = "NOT_PLANNED"
+                actions.to_label.append("bot_closed")
                 with open(get_template_path("needs_info_close")) as f:
                     actions.comments.append(
                         string.Template(f.read()).substitute(
@@ -1132,6 +1134,8 @@ def pr_from_upstream(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR) or obj.from_repo != "ansible/ansible":
         return
     actions.close = True
+    actions.close_reason = "NOT_PLANNED"
+
     with open(get_template_path("pr_from_upstream")) as f:
         actions.comments.append(string.Template(f.read()).substitute(author=obj.author))
     if obj.ci is not None:
