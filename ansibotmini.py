@@ -1651,12 +1651,26 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(
         prog="ansibotmini",
-        description="Triages github.com/ansible/ansible issues and PRs",
+        description=(
+            "triages ansible/ansible GitHub repository issues and pull requests "
+            "based on the Ansible Core Engineering team workflow"
+        ),
     )
-    parser.add_argument("--number", help="Github issue or pull request number")
-    parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--generate-byfile-page", action="store_true")
+    parser.add_argument("--number", help="GitHub issue or pull request number")
+    parser.add_argument("--debug", action="store_true", help="enable debug output")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="do not take any actions, just print what would have been done",
+    )
+    parser.add_argument(
+        "--generate-byfile-page",
+        action="store_true",
+        help=(
+            f"generate {BYFILE_PAGE_FILENAME} file that contains summary of all "
+            "issues and pull requests per a file in ansible/ansible repository"
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
