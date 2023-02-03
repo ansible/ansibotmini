@@ -7,7 +7,7 @@ from ansibotmini import process_component, match_existing_components
 
 @pytest.fixture
 def existing_files():
-    with open(os.path.join(os.path.dirname(__file__), "existing_files")) as f:
+    with open(os.path.join(os.path.dirname(__file__), "data/existing_files")) as f:
         rv = [line.strip() for line in f.readlines()]
     return rv
 

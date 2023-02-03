@@ -8,10 +8,12 @@ from ansibotmini import is_in_collection, TriageContext
 
 @pytest.fixture
 def ctx():
-    with open(os.path.join(os.path.dirname(__file__), "collections_list")) as f:
+    with open(os.path.join(os.path.dirname(__file__), "data/collections_list")) as f:
         collections_list = json.load(f)
 
-    with open(os.path.join(os.path.dirname(__file__), "collections_file_map")) as f:
+    with open(
+        os.path.join(os.path.dirname(__file__), "data/collections_file_map")
+    ) as f:
         collections_file_map = json.load(f)
 
     return TriageContext(
