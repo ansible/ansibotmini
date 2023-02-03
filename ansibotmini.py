@@ -80,7 +80,7 @@ OBJ_TYPE_RE = re.compile(
 )
 VERSION_RE = re.compile(r"ansible\s\[core\s([^]]+)]")
 COMPONENT_COMMAND_RE = re.compile(
-    r"^(?:@ansibot\s)?!component\s([=+-]\S+)$", flags=re.MULTILINE
+    r"^(?:@ansibot\s)?!?component\s([=+-]\S+)$", flags=re.MULTILINE
 )
 
 VALID_COMMANDS = (
@@ -92,8 +92,12 @@ VALID_COMMANDS = (
     "waiting_on_contributor",
     "!needs_collection_redirect",
 )
-COMMANDS_RE = re.compile(f"^({'|'.join(VALID_COMMANDS)})\s*$", flags=re.MULTILINE)
-RESOLVED_BY_PR_RE = re.compile(r"^resolved_by_pr\s([#0-9]+)\s*$", flags=re.MULTILINE)
+COMMANDS_RE = re.compile(
+    f"^(?:@ansibot\s)?({'|'.join(VALID_COMMANDS)})\s*$", flags=re.MULTILINE
+)
+RESOLVED_BY_PR_RE = re.compile(
+    r"^(?:@ansibot\s)?resolved_by_pr\s([#0-9]+)\s*$", flags=re.MULTILINE
+)
 
 ANSIBLE_PLUGINS = frozenset(
     (
