@@ -1362,6 +1362,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         for f in bot_funcs:
             f(obj, actions, ctx)
 
+        logging.debug("All potential actions:")
         logging.debug(pprint.pformat(actions))
         actions.to_label = [l for l in actions.to_label if l not in obj.labels]
         actions.to_unlabel = [l for l in actions.to_unlabel if l in obj.labels]
@@ -1371,8 +1372,11 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 f"The following labels were scheduled to be both added and removed {', '.join(common_labels)}"
             )
 
+        logging.info("Summary of actions to take:")
         logging.info(pprint.pformat(actions))
-        if not dry_run:
+        if dry_run:
+            logging.info("Skipping taking actions due to --dry-run")
+        else:
             if actions.to_label:
                 add_labels(obj, actions.to_label)
             if actions.to_unlabel:
