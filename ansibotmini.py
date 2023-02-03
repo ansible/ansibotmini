@@ -1318,6 +1318,8 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         for body, updated_at in bodies:
             for command in COMMANDS_RE.findall(body):
                 ctx.commands_found[command].append(Command(updated_at=updated_at))
+            if isinstance(obj, PR):
+                continue
             if match := RESOLVED_BY_PR_RE.search(body):
                 ctx.commands_found["resolved_by_pr"].append(
                     Command(updated_at=updated_at, arg=match.group(1).removeprefix("#"))
