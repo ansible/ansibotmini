@@ -1089,7 +1089,7 @@ def stale_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 def docs_only(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
-    if all(c.startswith("docs/") for c in obj.components):
+    if all(c.startswith("docs/docsite/") for c in obj.components):
         actions.to_label.append("docs_only")
         if last_boilerplate(obj, "docs_team_info") is None:
             with open(get_template_path("docs_team_info")) as f:
