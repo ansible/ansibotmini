@@ -121,6 +121,23 @@ ANSIBLE_PLUGINS = frozenset(
     )
 )
 
+NETWORK_PLUGIN_TYPE_DIRS = frozenset(
+    (
+        "lib/ansible/plugins/cliconf",
+        "lib/ansible/plugins/httpapi",
+        "lib/ansible/plugins/netconf",
+        "lib/ansible/plugins/terminal",
+    )
+)
+
+NETWORK_FILES = frozenset(
+    (
+        "lib/ansible/module_utils/connection.py",
+        "lib/ansible/cli/scripts/ansible_connection_cli_stub.py",
+    )
+)
+
+
 # TODO fetch from the actual template
 ISSUE_FEATURE_TEMPLATE_SECTIONS = frozenset(
     (
@@ -729,7 +746,8 @@ def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
             e["created_at"]
             for e in obj.events
             if e["name"] == "LabeledEvent" and e["label"] == name
-        )
+        ),
+        default=None,
     )
 
 
@@ -1263,6 +1281,19 @@ def test_support_plugin(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> No
             )
 
 
+def networking(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+    if (
+        any(
+            any(c.startswith(n) for n in NETWORK_PLUGIN_TYPE_DIRS) or c in NETWORK_FILES
+            for c in obj.components
+        )
+        or last_labeled(obj, "networking") is not None
+    ):
+        actions.to_label.append("networking")
+    else:
+        actions.to_unlabel.append("networking")
+
+
 bot_funcs = [
     match_components,  # order matters, other funcs use detected components
     match_object_type,  # order matters, other funcs use detected object type
@@ -1285,6 +1316,7 @@ bot_funcs = [
     linked_objs,
     needs_template,
     test_support_plugin,
+    networking,
 ]
 
 
