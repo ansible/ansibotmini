@@ -1307,20 +1307,28 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         logging.info(f"Triaging {obj.__class__.__name__} {obj.title} (#{obj.number})")
         # commands
         bodies = itertools.chain(
-            ((obj.body, obj.updated_at),),
+            ((obj.author, obj.body, obj.updated_at),),
             (
-                (e["body"], e["updated_at"])
+                (e["author"], e["body"], e["updated_at"])
                 for e in obj.events
                 if e["name"] == "IssueComment"
             ),
         )
         ctx.commands_found = collections.defaultdict(list)
-        for body, updated_at in bodies:
+        for author, body, updated_at in bodies:
             for command in COMMANDS_RE.findall(body):
+                if (
+                    command
+                    in {"bot_skip", "!bot_skip", "needs_info", "waiting_on_contributor"}
+                    and author not in ctx.committers
+                ):
+                    continue
                 ctx.commands_found[command].append(Command(updated_at=updated_at))
             if isinstance(obj, PR):
                 continue
             if match := RESOLVED_BY_PR_RE.search(body):
+                if author not in ctx.committers:
+                    continue
                 ctx.commands_found["resolved_by_pr"].append(
                     Command(updated_at=updated_at, arg=match.group(1).removeprefix("#"))
                 )
