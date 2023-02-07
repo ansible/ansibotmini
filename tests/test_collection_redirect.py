@@ -35,21 +35,21 @@ def ctx():
         (
             "community.vmware.vmware_guest_disk",
             "community.vmware.vmware_guest_disk",
-            "community.vmware",
+            ["community.vmware"],
         ),
         (
             "lib/ansible/modules/cloud/vmware/vmware_guest_disk.py",
             "plugins/modules/vmware_guest_disk.py",
-            "community.vmware",
+            ["community.vmware"],
         ),
         (
             "lib/ansible/plugins/action/patch.py",
             "plugins/action/patch.py",
-            "ansible.posix",
+            ["ansible.posix"],
         ),
-        ("patch", "plugins/action/patch.py", "ansible.posix"),
+        ("patch", "plugins/action/patch.py", ["ansible.posix"]),
+        ("role", "", []),
     ],
 )
 def test_collection_redirect(ctx, in_component, out_component, expected):
-    # FIXME more results than just expected
-    assert expected in is_in_collection([], [in_component], ctx)[out_component]
+    assert  sorted(is_in_collection([], [in_component], ctx)[out_component]) == sorted(expected)
