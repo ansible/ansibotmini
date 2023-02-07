@@ -722,6 +722,8 @@ def match_existing_components(
     paths.extend((f"lib/ansible/plugins/{name}/" for name in ANSIBLE_PLUGINS))
     files = []
     for filename in filenames:
+        if filename in {"core"}:
+            continue
         files.append(filename)
         if "/" not in filename:
             for path in paths:

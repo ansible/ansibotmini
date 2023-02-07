@@ -46,15 +46,14 @@ def existing_files():
             "ansible.builtin.file",
             ["lib/ansible/modules/file.py", "lib/ansible/plugins/lookup/file.py"],
         ),
-        #  ("  - ansible_playbook", ["bin/ansible-playbook"]),
         (
             "lib/ansible/module_utils/powershell/Ansible.ModuleUtils.Legacy.psm1",
             ["lib/ansible/module_utils/powershell/Ansible.ModuleUtils.Legacy.psm1"],
         ),
         ("lib/ansible/cli/galaxy", ["lib/ansible/cli/galaxy.py", "lib/ansible/galaxy"]),
-        #  ("module_utils", ["lib/ansible/module_utils"]),
-        #  "role"
-        #  "templar"
+        ("role", []),
+        ("templar", []),
+        ("core", []),
     ],
 )
 def test_component_matcher(existing_files, in_data, expected):
