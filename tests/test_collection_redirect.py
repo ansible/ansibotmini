@@ -52,4 +52,6 @@ def ctx():
     ],
 )
 def test_collection_redirect(ctx, in_component, out_component, expected):
-    assert  sorted(is_in_collection([], [in_component], ctx)[out_component]) == sorted(expected)
+    assert sorted(is_in_collection([], [in_component], ctx)[out_component]) == sorted(
+        expected
+    )

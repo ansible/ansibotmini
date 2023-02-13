@@ -713,6 +713,13 @@ def get_template_path(name: str) -> str:
     return os.path.join(os.path.dirname(__file__), "templates", f"{name}.tmpl")
 
 
+COMPONENT_TO_FILENAME = {
+    "role": "lib/ansible/playbook/role/__init__.py",
+    "tags": "lib/ansible/playbook/block.py",
+    "discovery": "lib/ansible/executor/interpreter_discovery.py",
+}
+
+
 def match_existing_components(
     filenames: list[str], existing_files: list[str]
 ) -> list[str]:
@@ -724,6 +731,10 @@ def match_existing_components(
     for filename in filenames:
         if filename in {"core"}:
             continue
+        if matched_filename := COMPONENT_TO_FILENAME.get(filename):
+            files.append(matched_filename)
+            continue
+
         files.append(filename)
         if "/" not in filename:
             for path in paths:
