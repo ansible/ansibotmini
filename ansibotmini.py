@@ -717,6 +717,19 @@ COMPONENT_TO_FILENAME = {
     "role": "lib/ansible/playbook/role/__init__.py",
     "tags": "lib/ansible/playbook/block.py",
     "discovery": "lib/ansible/executor/interpreter_discovery.py",
+    "module_utils": "lib/ansible/module_utils",
+    "become": "lib/ansible/plugins/become/__init__.py",
+    "strategy": "lib/ansible/plugins/strategy/__init__.py",
+    "any_errors_fatal": "lib/ansible/plugins/strategy/linear.py",
+    "max_fail_percentage": "lib/ansible/plugins/strategy/linear.py",
+    "templar": "lib/ansible/template/__init__.py",
+    "register": "lib/ansible/executor/task_executor.py",
+    "retries": "lib/ansible/executor/task_executor.py",
+    "loop": "lib/ansible/executor/task_executor.py",
+    "facts": "lib/ansible/modules/setup.py",
+    "run_once": "lib/ansible/plugins/strategy/__init__.py",
+    "force_handlers": "lib/ansible/playbook/play.py",
+    "vars_prompt": "lib/ansible/executor/playbook_executor.py",
 }
 
 
@@ -725,11 +738,18 @@ def match_existing_components(
 ) -> list[str]:
     if not filenames:
         return []
-    paths = ["lib/ansible/modules/", "bin/", "lib/ansible/cli/"]
+    paths = [
+        "lib/ansible/modules/",
+        "bin/",
+        "lib/ansible/cli/",
+        "lib/ansible/playbook/",
+        "lib/ansible/executor/",
+        "lib/ansible/vars/",
+    ]
     paths.extend((f"lib/ansible/plugins/{name}/" for name in ANSIBLE_PLUGINS))
     files = []
     for filename in filenames:
-        if filename in {"core"}:
+        if filename == "core":
             continue
         if matched_filename := COMPONENT_TO_FILENAME.get(filename):
             files.append(matched_filename)
@@ -744,7 +764,6 @@ def match_existing_components(
     components = [f for f in files if f in existing_files]
 
     if not components:
-        # FIXME should we fallback to this?
         for file in filenames:
             components.extend(
                 difflib.get_close_matches(file, existing_files, cutoff=0.85)
