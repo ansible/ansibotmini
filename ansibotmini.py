@@ -1235,7 +1235,7 @@ def linked_objs(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if isinstance(obj, PR):
+    if isinstance(obj, PR) or "docs" in actions.to_label:
         return
     missing = []
     if "bug" in actions.to_label:
@@ -1252,6 +1252,10 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             is None
         ):
             missing.append(section)
+
+    if "Component Name" in missing and "component" in ctx.commands_found:
+        missing.remove("Component Name")
+
     if missing:
         actions.to_label.append("needs_template")
         actions.to_label.append("needs_info")
