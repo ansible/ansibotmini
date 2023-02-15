@@ -783,6 +783,17 @@ def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
     )
 
 
+def last_unlabeled(obj: GH_OBJ, name: str) -> datetime.datetime:
+    return max(
+        (
+            e["created_at"]
+            for e in obj.events
+            if e["name"] == "UnlabeledEvent" and e["label"] == name
+        ),
+        default=None,
+    )
+
+
 def last_commented_by(obj: GH_OBJ, name: str) -> datetime.datetime | None:
     return max(
         (
@@ -1359,6 +1370,34 @@ bot_funcs = [
 ]
 
 
+def is_command_applied(name: str, obj: GH_OBJ, ctx: TriageContext) -> bool:
+    applied = []
+    if name in ctx.commands_found:
+        applied.append(ctx.commands_found[name][-1].updated_at)
+    if name in obj.labels:
+        applied.append(last_labeled(obj, name))
+
+    removed = []
+    if f"!{name}" in ctx.commands_found:
+        removed.append(ctx.commands_found[f"!{name}"][-1].updated_at)
+    if name not in obj.labels:
+        removed.append(last_unlabeled(obj, name))
+
+    last_applied = max(applied, default=None)
+    last_removed = max(removed, default=None)
+
+    if last_applied and last_removed is None:
+        return True
+    elif last_applied is None and last_removed:
+        raise AssertionError("Removed without being applied?")
+    elif last_applied is None and last_removed is None:
+        return False
+    elif last_applied > last_removed:
+        return True
+
+    return False
+
+
 def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
     devel_file_list = [e["path"] for e in http_request(DEVEL_FILE_LIST).json()["tree"]]
     for f in list(devel_file_list):
@@ -1408,17 +1447,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                     Command(updated_at=updated_at, arg=component)
                 )
 
-        is_bot_broken = "bot_broken" in ctx.commands_found and (
-            "!bot_broken" not in ctx.commands_found
-            or ctx.commands_found["bot_broken"][-1].updated_at
-            > ctx.commands_found["!bot_broken"][-1].updated_at
-        )
-        is_bot_skip = "bot_skip" in ctx.commands_found and (
-            "!bot_skip" not in ctx.commands_found
-            or ctx.commands_found["bot_skip"][-1].updated_at
-            > ctx.commands_found["!bot_skip"][-1].updated_at
-        )
-        if is_bot_broken:
+        if is_command_applied("bot_broken", obj, ctx):
             obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
             logging.info(
                 f"Skipping {obj.__class__.__name__} {obj.title} (#{obj.number}) due to bot_broken"
@@ -1429,7 +1458,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         else:
             if not dry_run:
                 remove_labels(obj, ["bot_broken"])
-        if is_bot_skip:
+        if is_command_applied("bot_skip", obj, ctx):
             obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
             logging.info(
                 f"Skipping {obj.__class__.__name__} {obj.title} (#{obj.number}) due to bot_skip"
