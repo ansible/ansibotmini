@@ -866,10 +866,13 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 for line in comment["body"].splitlines()
                 if line.startswith("*")
             ]
-            post_comment = existing_components != last_components
+            post_comment = sorted(existing_components) != sorted(last_components)
 
         if post_comment:
-            entries = [f"* `{component}`" for component in existing_components]
+            entries = [
+                f"* [`{component}`](https://github.com/ansible/ansible/blob/devel/{component})"
+                for component in existing_components
+            ]
             with open(get_template_path("components_banner")) as f:
                 actions.comments.append(
                     string.Template(f.read()).substitute(
