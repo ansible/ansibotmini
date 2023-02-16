@@ -682,8 +682,14 @@ def flatten_module_path(c: str) -> str:
     return re.sub(r"(lib/ansible/modules)/(.*)(/.+\.(?:py|ps1))", r"\1\3", c)
 
 
-def get_template_path(name: str) -> str:
-    return os.path.join(os.path.dirname(__file__), "templates", f"{name}.tmpl")
+def template_comment(template_name: str, sub_map: t.Optional[t.Mapping] = None) -> str:
+    if sub_map is None:
+        sub_map = {}
+    with open(
+        os.path.join(os.path.dirname(__file__), "templates", f"{template_name}.tmpl")
+    ) as f:
+        rv = string.Template(f.read()).substitute(sub_map)
+    return rv
 
 
 COMPONENT_TO_FILENAME = {
@@ -857,12 +863,12 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 f"* [`{component}`](https://github.com/ansible/ansible/blob/devel/{component})"
                 for component in existing_components
             ]
-            with open(get_template_path("components_banner")) as f:
-                actions.comments.append(
-                    string.Template(f.read()).substitute(
-                        components="\n".join(entries) if entries else None
-                    )
+            actions.comments.append(
+                template_comment(
+                    "components_banner",
+                    {"components": "\n".join(entries)} if entries else None,
                 )
+            )
 
         if (
             not existing_components
@@ -885,13 +891,12 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                             assembled_entries.append(
                                 f"* {component} -> {collection_info['repository']} ({GALAXY_URL}{collection_info['namespace']}.{collection_info['name']})"
                             )
-
-                with open(get_template_path("collection_redirect")) as f:
-                    actions.comments.append(
-                        string.Template(f.read()).substitute(
-                            components="\n".join(assembled_entries)
-                        )
+                actions.comments.append(
+                    template_comment(
+                        "collection_redirect",
+                        {"components": "\n".join(assembled_entries)},
                     )
+                )
                 actions.to_label.append("bot_closed")
                 actions.close = True
                 actions.close_reason = "NOT_PLANNED"
@@ -963,8 +968,7 @@ def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) ->
         actions.close_reason = "NOT_PLANNED"
         actions.to_label.append("bot_closed")
         actions.to_unlabel.append("waiting_on_contributor")
-        with open(get_template_path("waiting_on_contributor")) as f:
-            actions.comments.append(f.read())
+        actions.comments.append(template_comment("waiting_on_contributor"))
 
 
 def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
@@ -983,24 +987,26 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 actions.close = True
                 actions.close_reason = "NOT_PLANNED"
                 actions.to_label.append("bot_closed")
-                with open(get_template_path("needs_info_close")) as f:
-                    actions.comments.append(
-                        string.Template(f.read()).substitute(
-                            author=obj.author, object_type=obj.__class__.__name__
-                        )
+                actions.comments.append(
+                    template_comment(
+                        "needs_info_close",
+                        {"author": obj.author, "object_type": obj.__class__.__name__},
                     )
+                )
             elif days_labeled > NEEDS_INFO_WARN_DAYS:
                 last_warned = last_boilerplate(obj, "needs_info_warn")
                 if last_warned is None:
                     last_warned = last_boilerplate(obj, "needs_info_base")
                 if last_warned is None or last_warned["created_at"] < needs_info_date:
-                    with open(get_template_path("needs_info_warn")) as f:
-                        actions.comments.append(
-                            string.Template(f.read()).substitute(
-                                author=obj.author,
-                                object_type=obj.__class__.__name__,
-                            )
+                    actions.comments.append(
+                        template_comment(
+                            "needs_info_warn",
+                            {
+                                "author": obj.author,
+                                "object_type": obj.__class__.__name__,
+                            },
                         )
+                    )
         else:
             if "needs_info" in actions.to_label:
                 actions.to_label.remove("needs_info")
@@ -1079,13 +1085,11 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             and "<!--- boilerplate: ci_test_result --->" in e["body"]
             and f"<!-- r_hash: {r_hash} -->" in e["body"]
         ):
-            with open(get_template_path("ci_test_results")) as f:
-                actions.comments.append(
-                    string.Template(f.read()).substitute(
-                        results=results,
-                        r_hash=r_hash,
-                    )
+            actions.comments.append(
+                template_comment(
+                    "ci_test_results", {"results": results, "r_hash": r_hash}
                 )
+            )
     # ci_verified
     if all(ci_verifieds) and len(ci_verifieds) == len(failed_job_ids):
         actions.to_label.append("ci_verified")
@@ -1129,8 +1133,7 @@ def docs_only(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if all(c.startswith("docs/docsite/") for c in obj.components):
         actions.to_label.append("docs_only")
         if last_boilerplate(obj, "docs_team_info") is None:
-            with open(get_template_path("docs_team_info")) as f:
-                actions.comments.append(f.read())
+            actions.comments.append(template_comment("docs_team_info"))
 
 
 def backport(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
@@ -1172,9 +1175,9 @@ def pr_from_upstream(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         return
     actions.close = True
     actions.close_reason = "NOT_PLANNED"
-
-    with open(get_template_path("pr_from_upstream")) as f:
-        actions.comments.append(string.Template(f.read()).substitute(author=obj.author))
+    actions.comments.append(
+        template_comment("pr_from_upstream", {"author": obj.author})
+    )
     if obj.ci is not None:
         actions.cancel_ci = True
 
@@ -1244,14 +1247,16 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_label.append("needs_template")
         actions.to_label.append("needs_info")
         if last_boilerplate(obj, "issue_missing_data") is None:
-            with open(get_template_path("issue_missing_data")) as f:
-                actions.comments.append(
-                    string.Template(f.read()).substitute(
-                        author=obj.author,
-                        obj_type=obj.__class__.__name__,
-                        missing_sections="\n".join((f"- {s}" for s in missing)),
-                    )
+            actions.comments.append(
+                template_comment(
+                    "issue_missing_data",
+                    {
+                        "author": obj.author,
+                        "obj_type": obj.__class__.__name__,
+                        "missing_sections": "\n".join((f"- {s}" for s in missing)),
+                    },
                 )
+            )
     else:
         actions.to_unlabel.append("needs_template")
         if (
@@ -1295,13 +1300,11 @@ def test_support_plugin(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> No
             data.append("Could not find a match in collections.")
 
     if data and last_boilerplate(obj, "test_support_plugins") is None:
-        with open(get_template_path("test_support_plugins")) as f:
-            actions.comments.append(
-                string.Template(f.read()).substitute(
-                    author=obj.author,
-                    data="\n".join(data),
-                )
+        actions.comments.append(
+            template_comment(
+                "test_support_plugins", {"author": obj.author, "data": "\n".join(data)}
             )
+        )
 
 
 def networking(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
