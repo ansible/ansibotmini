@@ -835,6 +835,8 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         for command in ctx.commands_found.get("component", []):
             op, path = command.arg[0], command.arg[1:]
             command_components.append(path)
+            if path not in ctx.devel_file_list and not is_in_collection([path], [], ctx):
+                continue
             match op:
                 case "=":
                     existing_components = [path]
@@ -847,7 +849,6 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     raise ValueError(
                         f"Incorrect operation for the component command: {op}"
                     )
-        # FIXME check whether command components are valid
 
         post_comment = True
         if (comment := last_boilerplate(obj, "components_banner")) is not None:
@@ -933,7 +934,7 @@ def is_in_collection(
             if fqcn in ctx.collections_to_redirect:
                 entries[flatten].append(fqcn)
         if entries:
-            break  # FIXME ignore others?
+            break
     else:
         for component, plugin_type, ext in itertools.product(
             (c for c in processed_components if "/" not in c),
