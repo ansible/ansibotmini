@@ -470,7 +470,7 @@ def http_request(
         )
 
 
-def send_query(data: str) -> Response:
+def send_query(data: dict[str, t.Any]) -> Response:
     return http_request(
         GITHUB_GRAPHQL_URL,
         method="POST",
@@ -478,7 +478,7 @@ def send_query(data: str) -> Response:
             "Accept": "application/json",
             "Authorization": f"Bearer {gh_token}",
         },
-        data=data,
+        data=json.dumps(data),
     )
 
 
@@ -492,15 +492,7 @@ def get_label_id(name: str) -> str:
       }
     }
     """
-    resp = send_query(
-        json.dumps(
-            {
-                "query": query,
-                "variables": {"name": name},
-            }
-        )
-    )
-
+    resp = send_query({"query": query, "variables": {"name": name}})
     data = resp.json()["data"]
     return data["repository"]["label"]["id"]
 
@@ -515,17 +507,15 @@ def add_labels(obj: GH_OBJ, labels: list[str]) -> None:
     }
     """
     send_query(
-        json.dumps(
-            {
-                "query": query,
-                "variables": {
-                    "input": {
-                        "labelIds": [get_label_id(label) for label in labels],
-                        "labelableId": obj.id,
-                    },
+        {
+            "query": query,
+            "variables": {
+                "input": {
+                    "labelIds": [get_label_id(label) for label in labels],
+                    "labelableId": obj.id,
                 },
-            }
-        )
+            },
+        }
     )
 
 
@@ -538,17 +528,15 @@ def remove_labels(obj: GH_OBJ, labels: list[str]) -> None:
     }
     """
     send_query(
-        json.dumps(
-            {
-                "query": query,
-                "variables": {
-                    "input": {
-                        "labelIds": [obj.labels[label] for label in labels],
-                        "labelableId": obj.id,
-                    },
+        {
+            "query": query,
+            "variables": {
+                "input": {
+                    "labelIds": [obj.labels[label] for label in labels],
+                    "labelableId": obj.id,
                 },
-            }
-        )
+            },
+        }
     )
 
 
@@ -561,17 +549,15 @@ def add_comment(obj: GH_OBJ, body: str) -> None:
     }
     """
     send_query(
-        json.dumps(
-            {
-                "query": query,
-                "variables": {
-                    "input": {
-                        "body": body,
-                        "subjectId": obj.id,
-                    },
+        {
+            "query": query,
+            "variables": {
+                "input": {
+                    "body": body,
+                    "subjectId": obj.id,
                 },
-            }
-        )
+            },
+        }
     )
 
 
@@ -584,17 +570,15 @@ def close_issue(obj_id: str, reason: str) -> None:
     }
     """
     send_query(
-        json.dumps(
-            {
-                "query": query,
-                "variables": {
-                    "input": {
-                        "issueId": obj_id,
-                        "stateReason": reason,
-                    },
+        {
+            "query": query,
+            "variables": {
+                "input": {
+                    "issueId": obj_id,
+                    "stateReason": reason,
                 },
-            }
-        )
+            },
+        }
     )
 
 
@@ -607,16 +591,14 @@ def close_pr(obj_id: str) -> None:
     }
     """
     send_query(
-        json.dumps(
-            {
-                "query": query,
-                "variables": {
-                    "input": {
-                        "pullRequestId": obj_id,
-                    },
+        {
+            "query": query,
+            "variables": {
+                "input": {
+                    "pullRequestId": obj_id,
                 },
-            }
-        )
+            },
+        }
     )
 
 
@@ -631,15 +613,7 @@ def get_pr_state(number: int) -> str:
       }
     }
     """
-    resp = send_query(
-        json.dumps(
-            {
-                "query": query,
-                "variables": {"number": number},
-            }
-        )
-    )
-
+    resp = send_query({"query": query, "variables": {"number": number}})
     return resp.json()["data"]["repository"]["pullRequest"]["state"]
 
 
@@ -657,8 +631,7 @@ def get_committers() -> list[str]:
       }
     }
     """
-    resp = send_query(json.dumps({"query": query}))
-
+    resp = send_query({"query": query})
     return [
         n["login"]
         for n in resp.json()["data"]["organization"]["team"]["members"]["nodes"]
@@ -1542,14 +1515,7 @@ def get_gh_objects(obj_name: str) -> list[tuple[str, datetime.datetime]]:
     rv = []
     variables = {}
     while True:
-        resp = send_query(
-            json.dumps(
-                {
-                    "query": query,
-                    "variables": variables,
-                }
-            )
-        )
+        resp = send_query({"query": query, "variables": variables})
         data = resp.json()["data"]
         logging.info(data["rateLimit"])
 
@@ -1585,14 +1551,7 @@ def fetch_object(
     updated_at: t.Optional[datetime.datetime] = None,
 ) -> GH_OBJ:
     query = QUERY_SINGLE_ISSUE if object_name == "issue" else QUERY_SINGLE_PR
-    resp = send_query(
-        json.dumps(
-            {
-                "query": query,
-                "variables": {"number": int(number)},
-            }
-        )
-    )
+    resp = send_query({"query": query, "variables": {"number": int(number)}})
     data = resp.json()["data"]
     logging.info(data["rateLimit"])
     o = data["repository"][object_name]
