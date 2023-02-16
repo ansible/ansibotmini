@@ -35,7 +35,7 @@ minimal_required_python_version = (3, 11)
 if sys.version_info < minimal_required_python_version:
     raise SystemExit(
         f"ansibotmini requires Python {'.'.join((str(e) for e in minimal_required_python_version))} or newer. "
-        f"Python version detected: {sys.version.split(' ')[0]}"
+        f"Python version detected: {sys.version.split(' ', maxsplit=1)[0]}"
     )
 
 
@@ -1388,11 +1388,11 @@ def is_command_applied(name: str, obj: GH_OBJ, ctx: TriageContext) -> bool:
 
     if last_applied and last_removed is None:
         return True
-    elif last_applied is None and last_removed:
+    if last_applied is None and last_removed:
         raise AssertionError("Removed without being applied?")
-    elif last_applied is None and last_removed is None:
+    if last_applied is None and last_removed is None:
         return False
-    elif last_applied > last_removed:
+    if last_applied > last_removed:
         return True
 
     return False
@@ -1455,9 +1455,8 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
             if not dry_run:
                 add_labels(obj, ["bot_broken"])
             continue
-        else:
-            if not dry_run:
-                remove_labels(obj, ["bot_broken"])
+        if not dry_run:
+            remove_labels(obj, ["bot_broken"])
         if is_command_applied("bot_skip", obj, ctx):
             obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
             logging.info(
@@ -1739,7 +1738,7 @@ def daemon(dry_run: t.Optional = None, generate_byfile: t.Optional = None) -> No
                     f" and {request_counter} HTTP requests"
                 )
                 if generate_byfile:
-                    logging.info(f"Generating byfile.html")
+                    logging.info("Generating byfile.html")
                     generate_byfile_page()
         else:
             logging.info("No new issues/PRs")
