@@ -471,7 +471,7 @@ def http_request(
 
 
 def send_query(data: dict[str, t.Any]) -> Response:
-    return http_request(
+    resp = http_request(
         GITHUB_GRAPHQL_URL,
         method="POST",
         headers={
@@ -481,6 +481,10 @@ def send_query(data: dict[str, t.Any]) -> Response:
         data=json.dumps(data),
     )
 
+    if errors := resp.json().get("errors"):
+        raise ValueError(errors)
+
+    return resp
 
 def get_label_id(name: str) -> str:
     query = """
