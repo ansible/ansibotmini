@@ -88,15 +88,10 @@ VALID_COMMANDS = (
     "!bot_skip",
     "bot_broken",
     "!bot_broken",
-    "needs_info",
-    "waiting_on_contributor",
     "!needs_collection_redirect",
 )
 COMMANDS_RE = re.compile(
     f"^(?:@ansibot\s)?({'|'.join(VALID_COMMANDS)})\s*$", flags=re.MULTILINE
-)
-RESOLVED_BY_PR_RE = re.compile(
-    r"^(?:@ansibot\s)?resolved_by_pr\s([#0-9]+)\s*$", flags=re.MULTILINE
 )
 
 ANSIBLE_PLUGINS = frozenset(
@@ -486,6 +481,7 @@ def send_query(data: dict[str, t.Any]) -> Response:
 
     return resp
 
+
 def get_label_id(name: str) -> str:
     query = """
     query ($name: String!){
@@ -604,21 +600,6 @@ def close_pr(obj_id: str) -> None:
             },
         }
     )
-
-
-def get_pr_state(number: int) -> str:
-    query = """
-    query($number: Int!)
-    {
-      repository(owner: "ansible", name: "ansible") {
-        pullRequest(number: $number) {
-          state
-        }
-      }
-    }
-    """
-    resp = send_query({"query": query, "variables": {"number": number}})
-    return resp.json()["data"]["repository"]["pullRequest"]["state"]
 
 
 def get_committers() -> list[str]:
@@ -806,15 +787,6 @@ def days_since(when: datetime.datetime) -> int:
     return (datetime.datetime.now(datetime.timezone.utc) - when).days
 
 
-def resolved_by_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if commands := ctx.commands_found.get("resolved_by_pr"):
-        if all(
-            get_pr_state(int(command.arg)).lower() == "merged" for command in commands
-        ):
-            actions.close = True
-            actions.close_reason = "COMPLETED"
-
-
 def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     existing_components = []
     if isinstance(obj, PR):
@@ -839,7 +811,9 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         for command in ctx.commands_found.get("component", []):
             op, path = command.arg[0], command.arg[1:]
             command_components.append(path)
-            if path not in ctx.devel_file_list and not is_in_collection([path], [], ctx):
+            if path not in ctx.devel_file_list and not is_in_collection(
+                [path], [], ctx
+            ):
                 continue
             match op:
                 case "=":
@@ -962,8 +936,6 @@ def needs_triage(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if "waiting_on_contributor" in ctx.commands_found:
-        actions.to_label.append("waiting_on_contributor")
     if (
         "waiting_on_contributor" in obj.labels
         and days_since(last_labeled(obj, "waiting_on_contributor"))
@@ -977,14 +949,7 @@ def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) ->
 
 
 def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    needs_info_dates = [
-        command.updated_at for command in ctx.commands_found.get("needs_info", [])
-    ]
-    if "needs_info" in obj.labels:
-        needs_info_dates.append(last_labeled(obj, "needs_info"))
-
-    needs_info_date = max(needs_info_dates, default=None)
-    if needs_info_date:
+    if needs_info_date := last_labeled(obj, "needs_info"):
         commented_datetime = last_commented_by(obj, obj.author)
         if commented_datetime is None or needs_info_date > commented_datetime:
             days_labeled = days_since(needs_info_date)
@@ -1328,7 +1293,6 @@ def networking(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 bot_funcs = [
     match_components,  # order matters, other funcs use detected components
     match_object_type,  # order matters, other funcs use detected object type
-    resolved_by_pr,
     needs_triage,
     waiting_on_contributor,
     needs_info,
@@ -1409,20 +1373,13 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         for author, body, updated_at in bodies:
             for command in COMMANDS_RE.findall(body):
                 if (
-                    command
-                    in {"bot_skip", "!bot_skip", "needs_info", "waiting_on_contributor"}
+                    command in {"bot_skip", "!bot_skip"}
                     and author not in ctx.committers
                 ):
                     continue
                 ctx.commands_found[command].append(Command(updated_at=updated_at))
             if isinstance(obj, PR):
                 continue
-            if match := RESOLVED_BY_PR_RE.search(body):
-                if author not in ctx.committers:
-                    continue
-                ctx.commands_found["resolved_by_pr"].append(
-                    Command(updated_at=updated_at, arg=match.group(1).removeprefix("#"))
-                )
             for component in COMPONENT_COMMAND_RE.findall(body):
                 ctx.commands_found["component"].append(
                     Command(updated_at=updated_at, arg=component)
