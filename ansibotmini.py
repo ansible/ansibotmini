@@ -1319,14 +1319,14 @@ def is_command_applied(name: str, obj: GH_OBJ, ctx: TriageContext) -> bool:
     applied = []
     if name in ctx.commands_found:
         applied.append(ctx.commands_found[name][-1].updated_at)
-    if name in obj.labels:
-        applied.append(last_labeled(obj, name))
+    if d := last_labeled(obj, name):
+        applied.append(d)
 
     removed = []
     if f"!{name}" in ctx.commands_found:
         removed.append(ctx.commands_found[f"!{name}"][-1].updated_at)
-    if name not in obj.labels:
-        removed.append(last_unlabeled(obj, name))
+    if d := last_unlabeled(obj, name):
+        removed.append(d)
 
     last_applied = max(applied, default=None)
     last_removed = max(removed, default=None)
