@@ -1730,7 +1730,7 @@ def main() -> None:
         try:
             daemon(dry_run=args.dry_run, generate_byfile=args.generate_byfile_page)
         except Exception as e:
-            logging.error(e)
+            logging.exception(e)
             sys.exit(1)
 
 
