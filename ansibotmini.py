@@ -845,7 +845,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             actions.comments.append(
                 template_comment(
                     "components_banner",
-                    {"components": "\n".join(entries)} if entries else None,
+                    {"components": "\n".join(entries) if entries else None},
                 )
             )
 
