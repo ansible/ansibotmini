@@ -1407,8 +1407,8 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         for f in bot_funcs:
             f(obj, actions, ctx)
 
-        logging.debug("All potential actions:")
-        logging.debug(pprint.pformat(actions))
+        logging.info("All potential actions:")
+        logging.info(pprint.pformat(actions))
         actions.to_label = [l for l in actions.to_label if l not in obj.labels]
         actions.to_unlabel = [l for l in actions.to_unlabel if l in obj.labels]
 
@@ -1688,7 +1688,6 @@ def main() -> None:
         ),
     )
     parser.add_argument("--number", help="GitHub issue or pull request number")
-    parser.add_argument("--debug", action="store_true", help="enable debug output")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -1706,7 +1705,7 @@ def main() -> None:
 
     logging.basicConfig(
         format="%(asctime)s %(levelname)s:%(name)s: %(message)s",
-        level=logging.DEBUG if args.debug else logging.INFO,
+        level=logging.INFO,
         stream=sys.stderr,
     )
 
