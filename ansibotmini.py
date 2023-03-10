@@ -1485,6 +1485,7 @@ def process_events(issue: dict[str, t.Any]) -> list[dict[str, str]]:
 
 
 def get_gh_objects(obj_name: str) -> list[tuple[str, datetime.datetime]]:
+    logging.info("Getting open %s", obj_name)
     query = QUERY_ISSUE_NUMBERS if obj_name == "issues" else QUERY_PR_NUMBERS
     rv = []
     variables = {}
@@ -1524,6 +1525,7 @@ def fetch_object(
     object_name: str,
     updated_at: t.Optional[datetime.datetime] = None,
 ) -> GH_OBJ:
+    logging.info("Getting %s #%s", object_name, number)
     query = QUERY_SINGLE_ISSUE if object_name == "issue" else QUERY_SINGLE_PR
     resp = send_query({"query": query, "variables": {"number": int(number)}})
     data = resp.json()["data"]
@@ -1656,6 +1658,7 @@ def fetch_objects() -> dict[str, GH_OBJ]:
 def daemon(dry_run: t.Optional = None, generate_byfile: t.Optional = None) -> None:
     global request_counter
     while True:
+        logging.info("Starting triage")
         request_counter = 0
         start = time.time()
         if objs := fetch_objects():
@@ -1671,8 +1674,9 @@ def daemon(dry_run: t.Optional = None, generate_byfile: t.Optional = None) -> No
                     f" and {request_counter} HTTP requests"
                 )
                 if generate_byfile:
-                    logging.info("Generating byfile.html")
+                    logging.info("Generating %s", BYFILE_PAGE_FILENAME)
                     generate_byfile_page()
+                    logging.info("Done generating %s", BYFILE_PAGE_FILENAME)
         else:
             logging.info("No new issues/PRs")
             logging.info(
