@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # Copyright 2022 Martin Krizek <martin.krizek@gmail.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -437,32 +437,41 @@ def http_request(
     data: str = "",
     headers: t.Optional[t.MutableMapping[str, str]] = None,
     method: str = "GET",
+    retries: int = 2,
 ) -> Response:
     global request_counter
     if headers is None:
         headers = {}
 
-    try:
-        with urllib.request.urlopen(
-            urllib.request.Request(
-                url, data=data.encode("ascii"), headers=headers, method=method.upper()
-            ),
-        ) as response:
-            request_counter += 1
-            logging.info(
-                f"http request no. {request_counter}: {method} {url}: {response.status}, {response.reason}"
-            )
+    for i in range(retries):
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(
+                    url,
+                    data=data.encode("ascii"),
+                    headers=headers,
+                    method=method.upper(),
+                ),
+            ) as response:
+                request_counter += 1
+                logging.info(
+                    f"http request no. {request_counter}: {method} {url}: {response.status}, {response.reason}"
+                )
+                return Response(
+                    status_code=response.status,
+                    reason=response.reason,
+                    raw_data=response.read(),
+                )
+        except urllib.error.HTTPError as e:
+            logging.info("%s %s %s", method, url, e)
+            if e.status >= 500 and i < retries - 1:
+                logging.info("Retrying the request...")
+                continue
             return Response(
-                status_code=response.status,
-                reason=response.reason,
-                raw_data=response.read(),
+                status_code=e.status,
+                reason=e.reason,
+                raw_data=b"",
             )
-    except urllib.error.HTTPError as e:
-        return Response(
-            status_code=e.status,
-            reason=e.reason,
-            raw_data=b"",
-        )
 
 
 def send_query(data: dict[str, t.Any]) -> Response:
