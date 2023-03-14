@@ -31,6 +31,13 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 
+try:
+    import sentry_sdk
+except ImportError:
+    sentry_sdk = None
+
+__version__ = "0.0.1"
+
 minimal_required_python_version = (3, 11)
 if sys.version_info < minimal_required_python_version:
     raise SystemExit(
@@ -1724,6 +1731,14 @@ def main() -> None:
 
     config = configparser.ConfigParser()
     config.read(CONFIG_FILENAME)
+
+    if sentry_sdk is not None:
+        sentry_sdk.init(
+            dsn=config.get("default", "sentry_dsn"),
+            attach_stacktrace=True,
+            release=__version__,
+        )
+
     try:
         gh_token = config.get("default", "gh_token")
         azp_token = config.get("default", "azp_token")
