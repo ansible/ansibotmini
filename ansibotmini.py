@@ -1733,11 +1733,20 @@ def main() -> None:
     config.read(CONFIG_FILENAME)
 
     if sentry_sdk is not None:
-        sentry_sdk.init(
-            dsn=config.get("default", "sentry_dsn"),
-            attach_stacktrace=True,
-            release=__version__,
-        )
+        try:
+            sentry_dsn = config.get("default", "sentry_dsn")
+        except (configparser.NoSectionError, configparser.NoOptionError) as e:
+            logging.warning(
+                "Option 'sentry_dsn' in the configuration file is required to integrate sentry, "
+                "original error: %s",
+                e,
+            )
+        else:
+            sentry_sdk.init(
+                dsn=sentry_dsn,
+                attach_stacktrace=True,
+                release=__version__,
+            )
 
     try:
         gh_token = config.get("default", "gh_token")
