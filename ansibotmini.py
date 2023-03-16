@@ -462,7 +462,12 @@ def http_request(
             ) as response:
                 request_counter += 1
                 logging.info(
-                    f"http request no. {request_counter}: {method} {url}: {response.status}, {response.reason}"
+                    "http request no. %d: %s %s: %d, %s",
+                    request_counter,
+                    method,
+                    url,
+                    response.status,
+                    response.reason,
                 )
                 return Response(
                     status_code=response.status,
@@ -899,7 +904,10 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     obj.components = existing_components
 
     logging.info(
-        f"{obj.__class__.__name__} #{obj.number}: identified components: {', '.join(obj.components)}"
+        "%s #%d: identified components: %s",
+        obj.__class__.__name__,
+        obj.number,
+        ", ".join(obj.components),
     )
 
 
@@ -1375,7 +1383,9 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         devel_file_list=devel_file_list,
     )
     for obj in objects.values():
-        logging.info(f"Triaging {obj.__class__.__name__} {obj.title} (#{obj.number})")
+        logging.info(
+            "Triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number
+        )
         # commands
         bodies = itertools.chain(
             ((obj.author, obj.body, obj.updated_at),),
@@ -1404,7 +1414,10 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         if is_command_applied("bot_broken", obj, ctx):
             obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
             logging.info(
-                f"Skipping {obj.__class__.__name__} {obj.title} (#{obj.number}) due to bot_broken"
+                "Skipping %s %s (#%d) due to bot_broken",
+                obj.__class__.__name__,
+                obj.title,
+                obj.number,
             )
             if not dry_run:
                 add_labels(obj, ["bot_broken"])
@@ -1414,7 +1427,10 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
         if is_command_applied("bot_skip", obj, ctx):
             obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
             logging.info(
-                f"Skipping {obj.__class__.__name__} {obj.title} (#{obj.number}) due to bot_skip"
+                "Skipping %s %s (#%d) due to bot_skip",
+                obj.__class__.__name__,
+                obj.title,
+                obj.number,
             )
             continue
 
@@ -1450,7 +1466,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 cancel_ci(obj.ci.build_id)
 
             if actions.close:
-                logging.info(f"{obj.__class__.__name__} #{obj.number}: closing")
+                logging.info("%s #%d: closing", obj.__class__.__name__, obj.number)
                 if isinstance(obj, PR):
                     close_pr(obj.id)
                 elif isinstance(obj, Issue):
@@ -1458,7 +1474,7 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
 
         obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
         logging.info(
-            f"Done triaging {obj.__class__.__name__} {obj.title} (#{obj.number})"
+            "Done triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number
         )
 
 
@@ -1677,8 +1693,10 @@ def daemon(dry_run: t.Optional = None, generate_byfile: t.Optional = None) -> No
                     for number, obj in objs.items():
                         cache[str(number)] = obj
                 logging.info(
-                    f"Took {time.time() - start:.2f} seconds to triage {len(objs)} issues/PRs"
-                    f" and {request_counter} HTTP requests"
+                    "Took %.2f seconds to triage %d issues/PRs and %d HTTP requests",
+                    time.time() - start,
+                    len(objs),
+                    request_counter,
                 )
                 if generate_byfile:
                     logging.info("Generating %s", BYFILE_PAGE_FILENAME)
@@ -1687,10 +1705,11 @@ def daemon(dry_run: t.Optional = None, generate_byfile: t.Optional = None) -> No
         else:
             logging.info("No new issues/PRs")
             logging.info(
-                f"Took {time.time() - start:.2f} seconds to check for new issues/PRs"
-                f" and {request_counter} HTTP requests"
+                "Took %.2f seconds to check for new issues/PRs and %d HTTP requests",
+                time.time() - start,
+                request_counter,
             )
-        logging.info(f"Sleeping for {SLEEP_SECONDS // 60} minutes")
+        logging.info("Sleeping for %d minutes", SLEEP_SECONDS // 60)
         time.sleep(SLEEP_SECONDS)
 
 
