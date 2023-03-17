@@ -1507,6 +1507,10 @@ def process_events(issue: dict[str, t.Any]) -> list[dict[str, str]]:
     return rv
 
 
+def ratelimit_to_str(rate_limit: dict[str, t.Any]) -> str:
+    return f"cost: {rate_limit['cost']}, {rate_limit['remaining']}/{rate_limit['limit']} until {rate_limit['resetAt']}"
+
+
 def get_gh_objects(obj_name: str) -> list[tuple[str, datetime.datetime]]:
     logging.info("Getting open %s", obj_name)
     query = QUERY_ISSUE_NUMBERS if obj_name == "issues" else QUERY_PR_NUMBERS
@@ -1515,7 +1519,7 @@ def get_gh_objects(obj_name: str) -> list[tuple[str, datetime.datetime]]:
     while True:
         resp = send_query({"query": query, "variables": variables})
         data = resp.json()["data"]
-        logging.info(data["rateLimit"])
+        logging.info(ratelimit_to_str(data["rateLimit"]))
 
         objs = data["repository"][obj_name]
         for node in objs["nodes"]:
@@ -1552,7 +1556,7 @@ def fetch_object(
     query = QUERY_SINGLE_ISSUE if object_name == "issue" else QUERY_SINGLE_PR
     resp = send_query({"query": query, "variables": {"number": int(number)}})
     data = resp.json()["data"]
-    logging.info(data["rateLimit"])
+    logging.info(ratelimit_to_str(data["rateLimit"]))
     o = data["repository"][object_name]
     if o is None:
         raise ValueError(f"{number} not found")
