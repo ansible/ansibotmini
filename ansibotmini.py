@@ -422,6 +422,15 @@ class Actions:
     close: bool = False
     close_reason: t.Optional[str] = None
 
+    def __bool__(self):
+        return bool(
+            self.to_label
+            or self.to_unlabel
+            or self.comments
+            or self.cancel_ci
+            or self.close
+        )
+
 
 @dataclass
 class TriageContext:
@@ -1371,7 +1380,11 @@ def is_command_applied(name: str, obj: GH_OBJ, ctx: TriageContext) -> bool:
     return False
 
 
-def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None:
+def triage(
+    objects: dict[str, GH_OBJ],
+    dry_run: t.Optional[bool] = None,
+    ask: t.Optional[bool] = None,
+) -> None:
     devel_file_list = [e["path"] for e in http_request(DEVEL_FILE_LIST).json()["tree"]]
     for f in list(devel_file_list):
         if f.endswith("__init__.py"):
@@ -1453,28 +1466,43 @@ def triage(objects: dict[str, GH_OBJ], dry_run: t.Optional[bool] = None) -> None
                 f"The following labels were scheduled to be both added and removed {', '.join(common_labels)}"
             )
 
-        logging.info("Summary of actions to take:")
-        logging.info(pprint.pformat(actions))
         if dry_run:
             logging.info("Skipping taking actions due to --dry-run")
         else:
-            if actions.to_label:
-                add_labels(obj, actions.to_label)
-            if actions.to_unlabel:
-                remove_labels(obj, actions.to_unlabel)
+            if actions:
+                logging.info("Summary of actions to take:")
+                logging.info(pprint.pformat(actions))
 
-            for comment in actions.comments:
-                add_comment(obj, comment)
+                if ask:
+                    user_input = input("Take actions? (y/n): ")
+                    take_actions = user_input.strip() == "y"
+                else:
+                    take_actions = True
 
-            if actions.cancel_ci:
-                cancel_ci(obj.ci.build_id)
+                if take_actions:
+                    if actions.to_label:
+                        add_labels(obj, actions.to_label)
+                    if actions.to_unlabel:
+                        remove_labels(obj, actions.to_unlabel)
 
-            if actions.close:
-                logging.info("%s #%d: closing", obj.__class__.__name__, obj.number)
-                if isinstance(obj, PR):
-                    close_pr(obj.id)
-                elif isinstance(obj, Issue):
-                    close_issue(obj.id, actions.close_reason)
+                    for comment in actions.comments:
+                        add_comment(obj, comment)
+
+                    if actions.cancel_ci:
+                        cancel_ci(obj.ci.build_id)
+
+                    if actions.close:
+                        logging.info(
+                            "%s #%d: closing", obj.__class__.__name__, obj.number
+                        )
+                        if isinstance(obj, PR):
+                            close_pr(obj.id)
+                        elif isinstance(obj, Issue):
+                            close_issue(obj.id, actions.close_reason)
+                else:
+                    logging.info("Skipping taking actions")
+            else:
+                logging.info("No actions to take")
 
         obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
         logging.info(
@@ -1686,7 +1714,11 @@ def fetch_objects() -> dict[str, GH_OBJ]:
             return data
 
 
-def daemon(dry_run: t.Optional = None, generate_byfile: t.Optional = None) -> None:
+def daemon(
+    dry_run: t.Optional[bool] = None,
+    generate_byfile: t.Optional[bool] = None,
+    ask: t.Optional[bool] = None,
+) -> None:
     global request_counter
     while True:
         logging.info("Starting triage")
@@ -1694,7 +1726,7 @@ def daemon(dry_run: t.Optional = None, generate_byfile: t.Optional = None) -> No
         start = time.time()
         if objs := fetch_objects():
             try:
-                triage(objs, dry_run)
+                triage(objs, dry_run, ask)
             finally:
                 logging.info("Caching triaged issues")
                 with shelve.open(CACHE_FILENAME) as cache:
@@ -1748,6 +1780,11 @@ def main() -> None:
             "issues and pull requests per a file in ansible/ansible repository"
         ),
     )
+    parser.add_argument(
+        "--ask",
+        action="store_true",
+        help="stop and ask user before applying actions",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -1788,10 +1825,14 @@ def main() -> None:
 
     if args.number:
         obj = fetch_object_by_number(args.number)
-        triage({args.number: obj}, dry_run=args.dry_run)
+        triage({args.number: obj}, dry_run=args.dry_run, ask=args.ask)
     else:
         try:
-            daemon(dry_run=args.dry_run, generate_byfile=args.generate_byfile_page)
+            daemon(
+                dry_run=args.dry_run,
+                generate_byfile=args.generate_byfile_page,
+                ask=args.ask,
+            )
         except Exception as e:
             logging.exception(e)
             sys.exit(1)
