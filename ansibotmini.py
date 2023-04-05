@@ -982,10 +982,16 @@ def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) ->
 
 
 def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if needs_info_date := last_labeled(obj, "needs_info"):
+    if needs_info_labeled_date := last_labeled(obj, "needs_info"):
+        needs_info_unlabeled_date = last_unlabeled(obj, "needs_info")
         commented_datetime = last_commented_by(obj, obj.author)
-        if commented_datetime is None or needs_info_date > commented_datetime:
-            days_labeled = days_since(needs_info_date)
+        if (
+            commented_datetime is None or needs_info_labeled_date > commented_datetime
+        ) and (
+            needs_info_unlabeled_date is None
+            or needs_info_labeled_date > needs_info_unlabeled_date
+        ):
+            days_labeled = days_since(needs_info_labeled_date)
             if days_labeled > NEEDS_INFO_CLOSE_DAYS:
                 actions.close = True
                 actions.close_reason = "NOT_PLANNED"
@@ -1000,7 +1006,10 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 last_warned = last_boilerplate(obj, "needs_info_warn")
                 if last_warned is None:
                     last_warned = last_boilerplate(obj, "needs_info_base")
-                if last_warned is None or last_warned["created_at"] < needs_info_date:
+                if (
+                    last_warned is None
+                    or last_warned["created_at"] < needs_info_labeled_date
+                ):
                     actions.comments.append(
                         template_comment(
                             "needs_info_warn",
