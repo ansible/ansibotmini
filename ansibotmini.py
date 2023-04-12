@@ -892,14 +892,9 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                         collection_info = ctx.collections_list[fqcn]["manifest"][
                             "collection_info"
                         ]
-                        if (
-                            collection_info["namespace"]
-                            in collection_info["repository"]
-                            and collection_info["name"] in collection_info["repository"]
-                        ):
-                            assembled_entries.append(
-                                f"* {component} -> {collection_info['repository']} ({GALAXY_URL}{collection_info['namespace']}.{collection_info['name']})"
-                            )
+                        assembled_entries.append(
+                            f"* {component} -> {collection_info['repository']} ({GALAXY_URL}{collection_info['namespace']}.{collection_info['name']})"
+                        )
                 actions.comments.append(
                     template_comment(
                         "collection_redirect",
