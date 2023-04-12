@@ -562,7 +562,7 @@ def remove_labels(obj: GH_OBJ, labels: list[str]) -> None:
             "query": query,
             "variables": {
                 "input": {
-                    "labelIds": [obj.labels[label] for label in labels],
+                    "labelIds": [obj.labels[label] for label in labels if label in obj.labels],
                     "labelableId": obj.id,
                 },
             },
