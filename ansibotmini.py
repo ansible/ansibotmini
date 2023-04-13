@@ -1519,6 +1519,8 @@ def triage(
 def process_events(issue: dict[str, t.Any]) -> list[dict[str, str]]:
     rv = []
     for node in issue["timelineItems"]["nodes"]:
+        if node is None:
+            continue
         event = dict(
             name=node["__typename"],
             created_at=datetime.datetime.fromisoformat(node["createdAt"]),
