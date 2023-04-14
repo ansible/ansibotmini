@@ -955,11 +955,7 @@ def is_in_collection(
 
 
 def needs_triage(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not any(
-        e
-        for e in obj.events
-        if e["name"] == "LabeledEvent" and e["label"] in ("needs_triage", "triage")
-    ):
+    if is_new_issue(obj):
         actions.to_label.append("needs_triage")
 
 
@@ -1255,19 +1251,20 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         missing.remove("Component Name")
 
     if missing:
-        actions.to_label.append("needs_template")
-        actions.to_label.append("needs_info")
-        if last_boilerplate(obj, "issue_missing_data") is None:
-            actions.comments.append(
-                template_comment(
-                    "issue_missing_data",
-                    {
-                        "author": obj.author,
-                        "obj_type": obj.__class__.__name__,
-                        "missing_sections": "\n".join((f"- {s}" for s in missing)),
-                    },
+        if is_new_issue(obj):  # do not spam old issues
+            actions.to_label.append("needs_template")
+            actions.to_label.append("needs_info")
+            if last_boilerplate(obj, "issue_missing_data") is None:
+                actions.comments.append(
+                    template_comment(
+                        "issue_missing_data",
+                        {
+                            "author": obj.author,
+                            "obj_type": obj.__class__.__name__,
+                            "missing_sections": "\n".join((f"- {s}" for s in missing)),
+                        },
+                    )
                 )
-            )
     else:
         actions.to_unlabel.append("needs_template")
         if (
@@ -1281,6 +1278,14 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             and "needs_info" not in ctx.commands_found
         ):
             actions.to_unlabel.append("needs_info")
+
+
+def is_new_issue(obj: GH_OBJ) -> bool:
+    return not any(
+        e
+        for e in obj.events
+        if e["name"] == "LabeledEvent" and e["label"] in ("needs_triage", "triage")
+    )
 
 
 def test_support_plugin(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
