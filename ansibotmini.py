@@ -941,16 +941,17 @@ def is_in_collection(
                 entries[flatten].append(fqcn)
         if entries:
             break
-    else:
-        for component, plugin_type, ext in itertools.product(
-            (c for c in processed_components if "/" not in c),
-            (itertools.chain(ANSIBLE_PLUGINS, ["modules"])),
-            ("py", "ps1"),
-        ):
-            candidate = f"plugins/{plugin_type}/{component}.{ext}"
-            for fqcn in ctx.collections_file_map.get(candidate, []):
-                if fqcn in ctx.collections_to_redirect:
-                    entries[candidate].append(fqcn)
+    # FIXME too many false positives
+    # else:
+    #     for component, plugin_type, ext in itertools.product(
+    #         (c for c in processed_components if "/" not in c),
+    #         (itertools.chain(ANSIBLE_PLUGINS, ["modules"])),
+    #         ("py", "ps1"),
+    #     ):
+    #         candidate = f"plugins/{plugin_type}/{component}.{ext}"
+    #         for fqcn in ctx.collections_file_map.get(candidate, []):
+    #             if fqcn in ctx.collections_to_redirect:
+    #                 entries[candidate].append(fqcn)
     return entries
 
 
