@@ -562,7 +562,9 @@ def remove_labels(obj: GH_OBJ, labels: list[str]) -> None:
             "query": query,
             "variables": {
                 "input": {
-                    "labelIds": [obj.labels[label] for label in labels if label in obj.labels],
+                    "labelIds": [
+                        obj.labels[label] for label in labels if label in obj.labels
+                    ],
                     "labelableId": obj.id,
                 },
             },
@@ -817,6 +819,29 @@ def days_since(when: datetime.datetime) -> int:
     return (datetime.datetime.now(datetime.timezone.utc) - when).days
 
 
+def commented_after_bot_epoch(obj: GH_OBJ) -> bool:
+    """Did a human comment after ansibotmini was deployed?
+
+    This is to prevent spamming old issues with comments, like info about new components being identified.
+    So instead of commenting on like 300 issues after ansibotmini was deployed, wait until someone
+    comments on an issue/PR and only then post the comment.  ¯\_(ツ)_/¯
+    """
+    last_comment_date = max(
+        (
+            e["created_at"]
+            for e in obj.events
+            if e["name"] == "IssueComment" and e["author"] != BOT_ACCOUNT
+        ),
+        default=None,
+    )
+
+    return (
+        last_comment_date is not None
+        and datetime.datetime(2023, 4, 22, tzinfo=datetime.timezone.utc)
+        < last_comment_date
+    )
+
+
 def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     existing_components = []
     if isinstance(obj, PR):
@@ -867,7 +892,10 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             ]
             post_comment = sorted(existing_components) != sorted(last_components)
 
-        if post_comment:
+        if post_comment and (
+            is_new_issue(obj)
+            or (commented_after_bot_epoch(obj) and existing_components)
+        ):
             entries = [
                 f"* [`{component}`](https://github.com/ansible/ansible/blob/devel/{component})"
                 for component in existing_components
