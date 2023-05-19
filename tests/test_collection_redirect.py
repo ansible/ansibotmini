@@ -21,6 +21,8 @@ def ctx():
         collections_file_map=collections_file_map,
         committers=[],
         devel_file_list=[],
+        v29_file_list=["lib/ansible/plugins/action/patch.py"],
+        v29_flatten_modules=["lib/ansible/modules/vmware_guest_disk.py"],
         collections_to_redirect=[
             "ansible.posix",
             "community.general",
@@ -48,7 +50,13 @@ def ctx():
             ["ansible.posix"],
         ),
         ("patch", "plugins/action/patch.py", ["ansible.posix"]),
+        (
+            "vmware_guest_disk",
+            "plugins/modules/vmware_guest_disk.py",
+            ["community.vmware"],
+        ),
         ("role", "", []),
+        ("host", "", []),
     ],
 )
 def test_collection_redirect(ctx, in_component, out_component, expected):

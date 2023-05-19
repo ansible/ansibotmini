@@ -67,6 +67,9 @@ COLLECTIONS_TO_REDIRECT_ENDPOINT = "https://raw.githubusercontent.com/ansible-co
 DEVEL_FILE_LIST = (
     "https://api.github.com/repos/ansible/ansible/git/trees/devel?recursive=1"
 )
+V29_FILE_LIST = (
+    "https://api.github.com/repos/ansible/ansible/git/trees/v2.9.0?recursive=1"
+)
 
 STALE_CI_DAYS = 7
 STALE_ISSUE_DAYS = 7
@@ -89,6 +92,7 @@ VERSION_RE = re.compile(r"ansible\s\[core\s([^]]+)]")
 COMPONENT_COMMAND_RE = re.compile(
     r"^(?:@ansibot\s)?!?component\s([=+-]\S+)$", flags=re.MULTILINE
 )
+FLATTEN_MODULES_RE = re.compile(r"lib/ansible/modules/(.*)/(.+\.(?:py|ps1))")
 
 VALID_COMMANDS = (
     "bot_skip",
@@ -438,6 +442,8 @@ class TriageContext:
     collections_file_map: dict[str, t.Any]
     committers: list[str]
     devel_file_list: list[str]
+    v29_file_list: list[str]
+    v29_flatten_modules: list[str]
     collections_to_redirect: list[str]
     commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
 
@@ -969,17 +975,24 @@ def is_in_collection(
                 entries[flatten].append(fqcn)
         if entries:
             break
-    # FIXME too many false positives
-    # else:
-    #     for component, plugin_type, ext in itertools.product(
-    #         (c for c in processed_components if "/" not in c),
-    #         (itertools.chain(ANSIBLE_PLUGINS, ["modules"])),
-    #         ("py", "ps1"),
-    #     ):
-    #         candidate = f"plugins/{plugin_type}/{component}.{ext}"
-    #         for fqcn in ctx.collections_file_map.get(candidate, []):
-    #             if fqcn in ctx.collections_to_redirect:
-    #                 entries[candidate].append(fqcn)
+    else:
+        for component, plugin_type, ext in itertools.product(
+            (c for c in processed_components if "/" not in c),
+            (itertools.chain(ANSIBLE_PLUGINS, ["modules"])),
+            ("py", "ps1"),
+        ):
+            candidate = f"plugins/{plugin_type}/{component}.{ext}"
+            for fqcn in ctx.collections_file_map.get(candidate, []):
+                if fqcn in ctx.collections_to_redirect:
+                    if plugin_type == "modules":
+                        if (
+                            f"lib/ansible/modules/{component}.{ext}"
+                            in ctx.v29_flatten_modules
+                        ):
+                            entries[candidate].append(fqcn)
+                    else:
+                        if f"lib/ansible/{candidate}" in ctx.v29_file_list:
+                            entries[candidate].append(fqcn)
     return entries
 
 
@@ -1424,10 +1437,15 @@ def triage(
     ask: t.Optional[bool] = None,
     ignore_bot_skip: t.Optional[bool] = None,
 ) -> None:
+    # FIXME cache TriageContext
     devel_file_list = [e["path"] for e in http_request(DEVEL_FILE_LIST).json()["tree"]]
-    for f in list(devel_file_list):
-        if f.endswith("__init__.py"):
-            devel_file_list.append(os.path.dirname(f))
+    v29_file_list = [e["path"] for e in http_request(V29_FILE_LIST).json()["tree"]]
+    v29_flatten_modules = []
+    for f in v29_file_list:
+        if f.startswith("lib/ansible/modules") and f.endswith((".py", ".ps1")):
+            v29_flatten_modules.append(
+                re.sub(FLATTEN_MODULES_RE, r"plugins/modules/\2", f)
+            )
 
     ctx = TriageContext(
         collections_list=http_request(COLLECTIONS_LIST_ENDPOINT).json(),
@@ -1437,6 +1455,8 @@ def triage(
         .raw_data.decode()
         .splitlines(),
         devel_file_list=devel_file_list,
+        v29_file_list=v29_file_list,
+        v29_flatten_modules=v29_flatten_modules,
     )
     for obj in objects.values():
         logging.info(
