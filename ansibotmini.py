@@ -225,6 +225,7 @@ query($number: Int!)
       number
       title
       body
+      url
       labels (first: 20) {
         nodes {
           id
@@ -382,6 +383,7 @@ class Issue:
     number: int
     title: str
     body: str
+    url: str
     events: list[dict]
     labels: dict[str, str]
     updated_at: datetime.datetime
@@ -1462,6 +1464,7 @@ def triage(
         logging.info(
             "Triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number
         )
+        logging.info(obj.url)
         # commands
         bodies = itertools.chain(
             ((obj.author, obj.body, obj.updated_at),),
@@ -1661,6 +1664,7 @@ def fetch_object(
         number=o["number"],
         title=o["title"],
         body=o["body"],
+        url=o["url"],
         events=process_events(o),
         labels={node["name"]: node["id"] for node in o["labels"].get("nodes", [])},
         updated_at=updated_at,
