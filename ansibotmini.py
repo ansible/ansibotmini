@@ -81,6 +81,7 @@ SLEEP_SECONDS = 300
 CONFIG_FILENAME = os.path.expanduser("~/.ansibotmini.cfg")
 CACHE_FILENAME = os.path.expanduser("~/.ansibotmini_cache")
 BYFILE_PAGE_FILENAME = os.path.expanduser("~/byfile.html")
+LOG_FILENAME = os.path.expanduser("~/ansibotmini.log")
 
 COMPONENT_RE = re.compile(
     r"#{3,5}\scomponent\sname(.+?)(?=#{3,5}|$)", flags=re.IGNORECASE | re.DOTALL
@@ -1862,7 +1863,10 @@ def main() -> None:
     logging.basicConfig(
         format="%(asctime)s %(levelname)s:%(name)s: %(message)s",
         level=logging.INFO,
-        stream=sys.stderr,
+        handlers=[
+            logging.FileHandler(LOG_FILENAME),
+            logging.StreamHandler()
+        ]
     )
 
     config = configparser.ConfigParser()
