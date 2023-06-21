@@ -1441,8 +1441,18 @@ def triage(
     ignore_bot_skip: t.Optional[bool] = None,
 ) -> None:
     # FIXME cache TriageContext
-    devel_file_list = [e["path"] for e in http_request(DEVEL_FILE_LIST).json()["tree"]]
-    v29_file_list = [e["path"] for e in http_request(V29_FILE_LIST).json()["tree"]]
+    devel_file_list = [
+        e["path"]
+        for e in http_request(
+            DEVEL_FILE_LIST, headers={"Authorization": f"Bearer {gh_token}"}
+        ).json()["tree"]
+    ]
+    v29_file_list = [
+        e["path"]
+        for e in http_request(
+            V29_FILE_LIST, headers={"Authorization": f"Bearer {gh_token}"}
+        ).json()["tree"]
+    ]
     v29_flatten_modules = []
     for f in v29_file_list:
         if f.startswith("lib/ansible/modules") and f.endswith((".py", ".ps1")):
@@ -1863,10 +1873,7 @@ def main() -> None:
     logging.basicConfig(
         format="%(asctime)s %(levelname)s:%(name)s: %(message)s",
         level=logging.INFO,
-        handlers=[
-            logging.FileHandler(LOG_FILENAME),
-            logging.StreamHandler()
-        ]
+        handlers=[logging.FileHandler(LOG_FILENAME), logging.StreamHandler()],
     )
 
     config = configparser.ConfigParser()
