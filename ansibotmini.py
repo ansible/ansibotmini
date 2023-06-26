@@ -846,7 +846,7 @@ def commented_after_bot_epoch(obj: GH_OBJ) -> bool:
 
     return (
         last_comment_date is not None
-        and datetime.datetime(2023, 4, 22, tzinfo=datetime.timezone.utc)
+        and datetime.datetime(2023, 6, 29, tzinfo=datetime.timezone.utc)
         < last_comment_date
     )
 
