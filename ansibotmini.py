@@ -1765,7 +1765,10 @@ def fetch_objects() -> dict[str, GH_OBJ]:
         if not number_map["issues"] and not number_map["prs"]:
             return {}
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        # FIXME setting max_workers to 1> appears to hit GraphQL API too fast
+        #       on faster machines resulting in 403 Forbidden after certain
+        #       number of requests
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             futures = []
             for object_name, obj, data in (
                 ("issue", Issue, number_map["issues"]),
