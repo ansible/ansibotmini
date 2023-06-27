@@ -1068,8 +1068,6 @@ def match_object_type(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None
             actions.to_label.append("feature")
         if "bug" in data:
             actions.to_label.append("bug")
-        if "documentation" in data or "docs" in data:
-            actions.to_label.append("docs")
         if "test" in data:
             actions.to_label.append("test")
 
@@ -1175,15 +1173,6 @@ def stale_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_unlabel.append("stale_ci")
 
 
-def docs_only(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, PR):
-        return
-    if all(c.startswith("docs/docsite/") for c in obj.components):
-        actions.to_label.append("docs_only")
-        if last_boilerplate(obj, "docs_team_info") is None:
-            actions.comments.append(template_comment("docs_team_info"))
-
-
 def backport(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
@@ -1272,7 +1261,6 @@ def linked_objs(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if (
         isinstance(obj, PR)
-        or "docs" in actions.to_label
         or obj.author in ctx.committers
     ):
         return
@@ -1392,7 +1380,6 @@ bot_funcs = [
     needs_revision,
     needs_ci,
     stale_ci,
-    docs_only,
     backport,
     is_module,
     needs_rebase,
