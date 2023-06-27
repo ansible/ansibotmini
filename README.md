@@ -30,7 +30,6 @@
 * posts comments about sanity tests failures from the CI on pull requests
 * auto-cancels CI runs on Azure Pipelines for pull requests that have merge commits and/or are not based on a branch from a fork
 * closes issues/PRs that relate to components that have been moved to collections, posts a comment with information about the new repository
-* posts a comment with information about the documentation working group on documentation issues/PRs
 
 
 ### Labels
