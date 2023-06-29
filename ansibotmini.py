@@ -227,7 +227,7 @@ query($number: Int!)
       title
       body
       url
-      labels (first: 20) {
+      labels (first: 40) {
         nodes {
           id
           name
