@@ -318,10 +318,10 @@ last_commit: commits(last: 1) {
           checkRuns(last: 1) {
             nodes {
               detailsUrl
+              completedAt
             }
           }
           conclusion
-          updatedAt
           status
           app {
             name
@@ -1705,7 +1705,9 @@ def fetch_object(
                 ).group("buildId"),
                 conclusion=conclusion,
                 status=check_suite["status"].lower(),
-                updated_at=datetime.datetime.fromisoformat(check_suite["updatedAt"]),
+                updated_at=datetime.datetime.fromisoformat(
+                    check_suite["checkRuns"]["nodes"][0]["completedAt"]
+                ),
             )
         else:
             kwargs["ci"] = None
