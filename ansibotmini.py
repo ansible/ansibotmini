@@ -1239,7 +1239,8 @@ def bad_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
     if obj.merge_commit:
-        actions.cancel_ci = True
+        if obj.ci is not None and obj.ci.status != "completed":
+            actions.cancel_ci = True
         actions.to_label.append("merge_commit")
     else:
         actions.to_unlabel.append("merge_commit")
