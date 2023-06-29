@@ -1063,12 +1063,12 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 def match_object_type(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if match := OBJ_TYPE_RE.search(obj.body):
-        data = re.sub(r"~[^~]+~", "", match.group(1).lower())
-        if "feature" in data:
+        data = re.sub(r"~[^~]+~", "", match.group(1).lower()).lower()
+        if "feature " in data:
             actions.to_label.append("feature")
-        if "bug" in data:
+        if "bug " in data:
             actions.to_label.append("bug")
-        if "test" in data:
+        if "test " in data:
             actions.to_label.append("test")
 
 
