@@ -1146,7 +1146,11 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 def needs_revision(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR) or obj.ci is None:
         return
-    if obj.changes_requested or obj.ci.conclusion != "success":
+    if (
+        obj.changes_requested
+        and obj.last_review is not None
+        and obj.last_review > obj.last_commit
+    ) or obj.ci.conclusion != "success":
         actions.to_label.append("needs_revision")
     else:
         actions.to_unlabel.append("needs_revision")
@@ -1260,10 +1264,7 @@ def linked_objs(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if (
-        isinstance(obj, PR)
-        or obj.author in ctx.committers
-    ):
+    if isinstance(obj, PR) or obj.author in ctx.committers:
         return
     missing = []
     if "bug" in actions.to_label:
