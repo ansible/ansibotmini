@@ -1858,7 +1858,7 @@ def main() -> None:
         help="stop and ask user before applying actions",
     )
     parser.add_argument(
-        "--ignore_bot_skip",
+        "--ignore-bot-skip",
         action="store_true",
         help="ignore bot_skip and bot_broken commands",
     )
