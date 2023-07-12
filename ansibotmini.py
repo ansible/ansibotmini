@@ -165,6 +165,18 @@ ISSUE_BUG_TEMPLATE_SECTIONS = frozenset(
     )
 )
 
+LABLES_DO_NOT_OVERRIDE = {
+    "bug",
+    "feature",
+    "has_pr",
+    "module",
+    "needs_revision",
+    "needs_template",
+    "networking",
+    "stale_review",
+    "test",
+}
+
 QUERY_NUMBERS_TMPL = """
 query ($after: String) {
   rateLimit {
@@ -777,6 +789,26 @@ def match_existing_components(
     return list(set(components))
 
 
+def was_labeled_by_human(obj: GH_OBJ, label_name: str) -> bool:
+    return any(
+        e
+        for e in obj.events
+        if e["name"] == "LabeledEvent"
+        and e["label"] == label_name
+        and e["author"] != BOT_ACCOUNT
+    )
+
+
+def was_unlabeled_by_human(obj: GH_OBJ, label_name: str) -> bool:
+    return any(
+        e
+        for e in obj.events
+        if e["name"] == "UnlabeledEvent"
+        and e["label"] == label_name
+        and e["author"] != BOT_ACCOUNT
+    )
+
+
 def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
     return max(
         (
@@ -1278,13 +1310,7 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     else:
         actions.to_unlabel.append("needs_template")
         if (
-            not [
-                e
-                for e in obj.events
-                if e["name"] == "LabeledEvent"
-                and e["label"] == "needs_info"
-                and e["author"] != BOT_ACCOUNT
-            ]
+            not was_labeled_by_human(obj, "needs_info")
             and "needs_info" not in ctx.commands_found
         ):
             actions.to_unlabel.append("needs_info")
@@ -1334,12 +1360,9 @@ def test_support_plugin(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> No
 
 
 def networking(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if (
-        any(
-            any(c.startswith(n) for n in NETWORK_PLUGIN_TYPE_DIRS) or c in NETWORK_FILES
-            for c in obj.components
-        )
-        or last_labeled(obj, "networking") is not None
+    if any(
+        any(c.startswith(n) for n in NETWORK_PLUGIN_TYPE_DIRS) or c in NETWORK_FILES
+        for c in obj.components
     ):
         actions.to_label.append("networking")
     else:
@@ -1496,8 +1519,25 @@ def triage(
 
         logging.info("All potential actions:")
         logging.info(pprint.pformat(actions))
-        actions.to_label = [l for l in actions.to_label if l not in obj.labels]
-        actions.to_unlabel = [l for l in actions.to_unlabel if l in obj.labels]
+
+        actions.to_label = [
+            l
+            for l in actions.to_label
+            if l not in obj.labels
+            and not (
+                (l in LABLES_DO_NOT_OVERRIDE or l.startswith("affects_"))
+                and was_unlabeled_by_human(obj, l)
+            )
+        ]
+        actions.to_unlabel = [
+            l
+            for l in actions.to_unlabel
+            if l in obj.labels
+            and not (
+                (l in LABLES_DO_NOT_OVERRIDE or l.startswith("affects_"))
+                and was_labeled_by_human(obj, l)
+            )
+        ]
 
         if common_labels := set(actions.to_label).intersection(actions.to_unlabel):
             raise AssertionError(
