@@ -1095,7 +1095,7 @@ def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, PR) or obj.ci is None:
+    if not isinstance(obj, PR) or obj.ci is None or obj.ci.status != "completed":
         return
     resp = http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id)
     if resp.status_code == 404:
