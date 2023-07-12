@@ -828,29 +828,6 @@ def days_since(when: datetime.datetime) -> int:
     return (datetime.datetime.now(datetime.timezone.utc) - when).days
 
 
-def commented_after_bot_epoch(obj: GH_OBJ) -> bool:
-    """Did a human comment after ansibotmini was deployed?
-
-    This is to prevent spamming old issues with comments, like info about new components being identified.
-    So instead of commenting on like 300 issues after ansibotmini was deployed, wait until someone
-    comments on an issue/PR and only then post the comment.  ¯\_(ツ)_/¯
-    """
-    last_comment_date = max(
-        (
-            e["created_at"]
-            for e in obj.events
-            if e["name"] == "IssueComment" and e["author"] != BOT_ACCOUNT
-        ),
-        default=None,
-    )
-
-    return (
-        last_comment_date is not None
-        and datetime.datetime(2023, 6, 29, tzinfo=datetime.timezone.utc)
-        < last_comment_date
-    )
-
-
 def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     existing_components = []
     if isinstance(obj, PR):
@@ -893,17 +870,19 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     )
 
         post_comment = True
-        if (comment := last_boilerplate(obj, "components_banner")) is not None:
+        last_comment = last_boilerplate(obj, "components_banner")
+        if last_comment:
             last_components = [
                 re.sub(r"[*`\[\]]", "", re.sub(r"\([^)]+\)", "", line)).strip()
-                for line in comment["body"].splitlines()
+                for line in last_comment["body"].splitlines()
                 if line.startswith("*")
             ]
             post_comment = sorted(existing_components) != sorted(last_components)
 
+        last_command = ctx.commands_found.get("component", [])[-1:]
         if post_comment and (
             is_new_issue(obj)
-            or (commented_after_bot_epoch(obj) and existing_components)
+            or (last_comment and last_command and last_comment["created_at"] < last_command[0].updated_at)
         ):
             entries = [
                 f"* [`{component}`](https://github.com/ansible/ansible/blob/devel/{component})"
