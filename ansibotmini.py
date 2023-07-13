@@ -1940,6 +1940,9 @@ def main() -> None:
                 ask=args.ask,
                 ignore_bot_skip=args.ignore_bot_skip,
             )
+        except KeyboardInterrupt:
+            print("Bye")
+            sys.exit(0)
         except Exception as e:
             logging.exception(e)
             sys.exit(1)
