@@ -17,6 +17,7 @@ import io
 import itertools
 import json
 import logging
+import logging.handlers
 import os.path
 import pprint
 import re
@@ -1895,7 +1896,12 @@ def main() -> None:
     logging.basicConfig(
         format="%(asctime)s %(levelname)s:%(name)s: %(message)s",
         level=logging.INFO,
-        handlers=[logging.FileHandler(LOG_FILENAME), logging.StreamHandler()],
+        handlers=[
+            logging.handlers.RotatingFileHandler(
+                LOG_FILENAME, maxBytes=5 * 1024 * 1024, backupCount=3
+            ),
+            logging.StreamHandler(),
+        ],
     )
 
     config = configparser.ConfigParser()
