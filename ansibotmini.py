@@ -412,7 +412,7 @@ class PR(Issue):
     changes_requested: bool
     last_review: datetime.datetime
     last_commit: datetime.datetime
-    ci: CI | None
+    ci: CI
     from_repo: str
     merge_commit: bool
     has_issue: bool
@@ -420,10 +420,13 @@ class PR(Issue):
 
 @dataclass
 class CI:
-    build_id: int
-    conclusion: str
-    status: str
-    updated_at: datetime.datetime
+    build_id: t.Optional[int] = None
+    completed: bool = False
+    passed: bool = False
+    completed_at: t.Optional[datetime.datetime] = None
+
+    def is_running(self) -> bool:
+        return self.build_id is not None and not self.completed
 
 
 @dataclass
@@ -914,7 +917,11 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         last_command = ctx.commands_found.get("component", [])[-1:]
         if post_comment and (
             is_new_issue(obj)
-            or (last_comment and last_command and last_comment["created_at"] < last_command[0].updated_at)
+            or (
+                last_comment
+                and last_command
+                and last_comment["created_at"] < last_command[0].updated_at
+            )
         ):
             entries = [
                 f"* [`{component}`](https://github.com/ansible/ansible/blob/devel/{component})"
@@ -1095,12 +1102,12 @@ def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, PR) or obj.ci is None or obj.ci.status != "completed":
+    if not isinstance(obj, PR) or not obj.ci.completed:
         return
     resp = http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id)
     if resp.status_code == 404:
         # not available anymore
-        if obj.ci.conclusion == "success":
+        if obj.ci.passed:
             actions.to_unlabel.append("ci_verified")
         return
     failed_job_ids = [
@@ -1151,13 +1158,13 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def needs_revision(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, PR) or obj.ci is None:
+    if not isinstance(obj, PR) or not obj.ci.completed:
         return
     if (
         obj.changes_requested
         and obj.last_review is not None
         and obj.last_review > obj.last_commit
-    ) or obj.ci.conclusion != "success":
+    ) or not obj.ci.passed:
         actions.to_label.append("needs_revision")
     else:
         actions.to_unlabel.append("needs_revision")
@@ -1167,7 +1174,7 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
     label = "needs_ci"
-    if obj.ci is None or obj.ci.status != "completed":
+    if not obj.ci.completed:
         if "pre_azp" not in obj.labels:
             actions.to_label.append(label)
     else:
@@ -1176,9 +1183,9 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def stale_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, PR) or obj.ci is None:
+    if not isinstance(obj, PR) or not obj.ci.completed:
         return
-    if days_since(obj.ci.updated_at) > STALE_CI_DAYS:
+    if days_since(obj.ci.completed_at) > STALE_CI_DAYS:
         actions.to_label.append("stale_ci")
     else:
         actions.to_unlabel.append("stale_ci")
@@ -1226,7 +1233,7 @@ def pr_from_upstream(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     actions.comments.append(
         template_comment("pr_from_upstream", {"author": obj.author})
     )
-    if obj.ci is not None:
+    if obj.ci.is_running():
         actions.cancel_ci = True
 
 
@@ -1250,7 +1257,7 @@ def bad_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
     if obj.merge_commit:
-        if obj.ci is not None and obj.ci.status != "completed":
+        if obj.ci.is_running():
             actions.cancel_ci = True
         actions.to_label.append("merge_commit")
     else:
@@ -1713,21 +1720,23 @@ def fetch_object(
             "nodes"
         ]:
             check_suite = check_suite[0]
-            conclusion = check_suite["conclusion"]
-            if conclusion is not None:
-                conclusion = conclusion.lower()
+            try:
+                completed_at = datetime.datetime.fromisoformat(
+                    check_suite["checkRuns"]["nodes"][0]["completedAt"]
+                )
+            except TypeError:
+                completed_at = None
             kwargs["ci"] = CI(
                 build_id=AZP_BUILD_ID_RE.search(
                     check_suite["checkRuns"]["nodes"][0]["detailsUrl"]
                 ).group("buildId"),
-                conclusion=conclusion,
-                status=check_suite["status"].lower(),
-                updated_at=datetime.datetime.fromisoformat(
-                    check_suite["checkRuns"]["nodes"][0]["completedAt"]
-                ),
+                completed=check_suite["status"].lower() == "completed",
+                passed=(check_suite["conclusion"] or "").lower() == "success",
+                completed_at=completed_at,
             )
         else:
-            kwargs["ci"] = None
+            kwargs["ci"] = CI()
+
         repo = o["headRepository"]
         kwargs["from_repo"] = (
             f"{repo['owner']['login']}/{repo['name']}" if repo else "ghost/ghost"
