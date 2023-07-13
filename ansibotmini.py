@@ -347,6 +347,7 @@ last_commit: commits(last: 1) {
 commits(last: 50) {
   nodes {
     commit {
+      oid
       parents(last: 2) {
         nodes {
           id
@@ -415,7 +416,7 @@ class PR(Issue):
     last_commit: datetime.datetime
     ci: CI
     from_repo: str
-    merge_commit: bool
+    merge_commits: list[str]
     has_issue: bool
 
 
@@ -1257,9 +1258,19 @@ def cancel_ci(build_id: int) -> None:
 def bad_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
-    if obj.merge_commit:
+    if obj.merge_commits:
         if obj.ci.is_running():
             actions.cancel_ci = True
+        if not last_boilerplate(obj, "merge_commit_notify"):
+            actions.comments.append(
+                template_comment(
+                    "merge_commit_notify",
+                    {
+                        "author": obj.author,
+                        "commits": "\n".join((f"* {c}" for c in obj.merge_commits)),
+                    },
+                )
+            )
         actions.to_label.append("merge_commit")
     else:
         actions.to_unlabel.append("merge_commit")
@@ -1746,9 +1757,11 @@ def fetch_object(
         kwargs["from_repo"] = (
             f"{repo['owner']['login']}/{repo['name']}" if repo else "ghost/ghost"
         )
-        kwargs["merge_commit"] = any(
-            len(n["commit"]["parents"]["nodes"]) > 1 for n in o["commits"]["nodes"]
-        )
+        kwargs["merge_commits"] = [
+            n["commit"]["oid"]
+            for n in o["commits"]["nodes"]
+            if len(n["commit"]["parents"]["nodes"]) > 1
+        ]
         kwargs["has_issue"] = len(o["closingIssuesReferences"]["nodes"]) > 0
 
     return obj(**kwargs)
