@@ -1524,6 +1524,10 @@ def triage(
         for f in bot_funcs:
             f(obj, actions, ctx)
 
+        # remove bot_closed for re-opened issues/prs
+        if "bot_closed" not in actions.to_label:
+            actions.to_unlabel.append("bot_closed")
+
         logging.info("All potential actions:")
         logging.info(pprint.pformat(actions))
 
