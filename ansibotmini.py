@@ -1084,8 +1084,8 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 def match_object_type(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if match := OBJ_TYPE_RE.search(obj.body):
         data = re.sub(r"~[^~]+~", "", match.group(1).lower()).lower()
-        if m := re.match("^(feature|bug|test) ", data):
-            actions.to_label.append(m.group(1))
+        for m in re.findall(r"\b(feature|bug|test)\b", data, flags=re.MULTILINE):
+            actions.to_label.append(m)
 
 
 def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
