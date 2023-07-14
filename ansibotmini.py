@@ -1152,8 +1152,10 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     "ci_test_results", {"results": results, "r_hash": r_hash}
                 )
             )
-    # ci_verified
-    if all(ci_verifieds) and len(ci_verifieds) == len(failed_job_ids):
+    if (all(ci_verifieds) and len(ci_verifieds) == len(failed_job_ids)) or (
+        "ci_verified" in obj.labels
+        and last_labeled(obj, "ci_verified") >= obj.ci.completed_at
+    ):
         actions.to_label.append("ci_verified")
     else:
         actions.to_unlabel.append("ci_verified")
