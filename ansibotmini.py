@@ -906,35 +906,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                         f"Incorrect operation for the component command: {op}"
                     )
 
-        post_comment = True
-        last_comment = last_boilerplate(obj, "components_banner")
-        if last_comment:
-            last_components = [
-                re.sub(r"[*`\[\]]", "", re.sub(r"\([^)]+\)", "", line)).strip()
-                for line in last_comment["body"].splitlines()
-                if line.startswith("*")
-            ]
-            post_comment = sorted(existing_components) != sorted(last_components)
-
-        last_command = ctx.commands_found.get("component", [])[-1:]
-        if post_comment and (
-            is_new_issue(obj)
-            or (
-                last_comment
-                and last_command
-                and last_comment["created_at"] < last_command[0].updated_at
-            )
-        ):
-            entries = [
-                f"* [`{component}`](https://github.com/ansible/ansible/blob/devel/{component})"
-                for component in existing_components
-            ]
-            actions.comments.append(
-                template_comment(
-                    "components_banner",
-                    {"components": "\n".join(entries) if entries else None},
-                )
-            )
+        post_comments_banner = True
 
         if (
             not existing_components
@@ -961,6 +933,39 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 actions.to_label.append("bot_closed")
                 actions.close = True
                 actions.close_reason = "NOT_PLANNED"
+                post_comments_banner = False
+
+        if post_comments_banner:
+            last_comment = last_boilerplate(obj, "components_banner")
+            if last_comment:
+                last_components = [
+                    re.sub(r"[*`\[\]]", "", re.sub(r"\([^)]+\)", "", line)).strip()
+                    for line in last_comment["body"].splitlines()
+                    if line.startswith("*")
+                ]
+                post_comments_banner = sorted(existing_components) != sorted(
+                    last_components
+                )
+
+            last_command = ctx.commands_found.get("component", [])[-1:]
+            if post_comments_banner and (
+                is_new_issue(obj)
+                or (
+                    last_comment
+                    and last_command
+                    and last_comment["created_at"] < last_command[0].updated_at
+                )
+            ):
+                entries = [
+                    f"* [`{component}`](https://github.com/ansible/ansible/blob/devel/{component})"
+                    for component in existing_components
+                ]
+                actions.comments.append(
+                    template_comment(
+                        "components_banner",
+                        {"components": "\n".join(entries) if entries else None},
+                    )
+                )
 
     obj.components = existing_components
 
