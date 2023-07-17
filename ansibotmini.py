@@ -388,7 +388,7 @@ class Response:
     raw_data: bytes
 
     def json(self) -> t.Any:
-        return json.loads(self.raw_data.decode())
+        return json.loads((self.raw_data or b"{}").decode())
 
 
 @dataclass
@@ -549,8 +549,7 @@ def get_label_id(name: str) -> str:
     }
     """
     resp = send_query({"query": query, "variables": {"name": name}})
-    data = resp.json()["data"]
-    return data["repository"]["label"]["id"]
+    return resp.json()["data"]["repository"]["label"]["id"]
 
 
 def add_labels(obj: GH_OBJ, labels: list[str]) -> None:
@@ -1119,7 +1118,7 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         return
     failed_job_ids = [
         r["id"]
-        for r in resp.json()["records"]
+        for r in resp.json().get("records", [])
         if r["type"] == "Job" and r["result"] == "failed"
     ]
     if not failed_job_ids:
