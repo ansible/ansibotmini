@@ -1182,7 +1182,7 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
     label = "needs_ci"
-    if not obj.ci.completed:
+    if obj.ci.build_id is None:
         if "pre_azp" not in obj.labels:
             actions.to_label.append(label)
     else:
