@@ -314,6 +314,7 @@ QUERY_SINGLE_ISSUE = QUERY_SINGLE_TMPL % ("issue", "")
 QUERY_SINGLE_PR = QUERY_SINGLE_TMPL % (
     "pullRequest",
     """
+createdAt
 baseRef {
   name
 }
@@ -418,6 +419,7 @@ class PR(Issue):
     from_repo: str
     merge_commits: list[str]
     has_issue: bool
+    created_at: datetime.datetime
 
 
 @dataclass
@@ -1179,7 +1181,11 @@ def needs_revision(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, PR):
+    if (
+        not isinstance(obj, PR)
+        or (datetime.datetime.now(datetime.timezone.utc) - obj.created_at).seconds
+        < 5 * 60
+    ):
         return
     label = "needs_ci"
     if obj.ci.build_id is None:
@@ -1716,6 +1722,7 @@ def fetch_object(
         last_triaged=None,
     )
     if object_name == "pullRequest":
+        kwargs["created_at"] = o["createdAt"]
         kwargs["branch"] = o["baseRef"]["name"]
         kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
         kwargs["mergeable"] = o["mergeable"].lower()
