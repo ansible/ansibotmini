@@ -1722,7 +1722,7 @@ def fetch_object(
         last_triaged=None,
     )
     if object_name == "pullRequest":
-        kwargs["created_at"] = o["createdAt"]
+        kwargs["created_at"] = datetime.datetime.fromisoformat(o["createdAt"])
         kwargs["branch"] = o["baseRef"]["name"]
         kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
         kwargs["mergeable"] = o["mergeable"].lower()
