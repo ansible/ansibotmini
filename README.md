@@ -25,7 +25,7 @@
 * adds [Labels](#labels)
 * supports [Commands](#commands)
 * automatically identifies components (files in `ansible/ansible`) that relate to an issue/PR
-* a listing of all issues/PRs per a file of the `ansible/ansible` repository is periodically generated and can be accessed at http://ansibotmini.eng.ansible.com/byfile.html
+* a listing of all issues/PRs per a file of the `ansible/ansible` repository is periodically generated and can be accessed at https://ansibotmini.eng.ansible.com/byfile.html
 * for pull requests changing plugins in `test/support` directory (containing plugins moved to collections but still used in CI to support testing, generally such plugins should not be changed), the bot posts a comment on such  pull requests explaining the intent of the directory
 * posts comments about sanity tests failures from the CI on pull requests
 * auto-cancels CI runs on Azure Pipelines for pull requests that have merge commits and/or are not based on a branch from a fork
