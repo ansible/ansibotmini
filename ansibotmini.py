@@ -326,15 +326,16 @@ last_commit: commits(last: 1) {
       committedDate
       checkSuites(last: 1) {
         nodes {
+          createdAt
           checkRuns(last: 1) {
             nodes {
+              name
               detailsUrl
-              startedAt
               completedAt
+              conclusion
+              status
             }
           }
-          conclusion
-          status
         }
       }
     }
@@ -422,8 +423,9 @@ class CI:
     build_id: t.Optional[int] = None
     completed: bool = False
     passed: bool = False
+    cancelled: bool = False
     completed_at: t.Optional[datetime.datetime] = None
-    started_at: t.Optional[datetime.datetime] = None
+    created_at: t.Optional[datetime.datetime] = None
 
     def is_running(self) -> bool:
         return self.build_id is not None and not self.completed
@@ -1114,11 +1116,13 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         if obj.ci.passed:
             actions.to_unlabel.append("ci_verified")
         return
-    failed_job_ids = [
-        r["id"]
-        for r in resp.json().get("records", [])
-        if r["type"] == "Job" and r["result"] == "failed"
-    ]
+    failed_job_ids = []
+    for r in resp.json().get("records", []):
+        if r["type"] == "Job":
+            if r["result"] == "failed":
+                failed_job_ids.append(r["id"])
+            elif r["result"] == "canceled":
+                obj.ci.cancelled = True
     if not failed_job_ids:
         actions.to_unlabel.append("ci_verified")
         return
@@ -1184,10 +1188,16 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     ):
         return
 
-    if obj.ci.build_id is None or (
-        obj.ci.is_running()
-        and (datetime.datetime.now(datetime.timezone.utc) - obj.ci.started_at).seconds
-        > 2 * 60 * 60
+    if (
+        obj.ci.build_id is None
+        or (obj.ci.cancelled and "merge_commit" not in actions.to_label)
+        or (
+            obj.ci.is_running()
+            and (
+                datetime.datetime.now(datetime.timezone.utc) - obj.ci.created_at
+            ).seconds
+            > 2 * 60 * 60
+        )
     ):
         if "pre_azp" not in obj.labels:
             actions.to_label.append("needs_ci")
@@ -1407,7 +1417,8 @@ bot_funcs = [
     waiting_on_contributor,
     needs_info,
     match_version,
-    ci_comments,
+    merge_commits,  # order matters, must be before needs_ci
+    ci_comments,  # order matters, must be before needs_ci
     needs_revision,
     needs_ci,
     stale_ci,
@@ -1416,7 +1427,6 @@ bot_funcs = [
     needs_rebase,
     stale_review,
     pr_from_upstream,
-    merge_commits,
     linked_objs,
     needs_template,
     test_support_plugin,
@@ -1748,25 +1758,30 @@ def fetch_object(
         if check_suite := o["last_commit"]["nodes"][0]["commit"]["checkSuites"][
             "nodes"
         ]:
-            check_suite = check_suite[0]
-            try:
-                completed_at = datetime.datetime.fromisoformat(
-                    check_suite["checkRuns"]["nodes"][0]["completedAt"]
+            check_run = check_suite[0]["checkRuns"]["nodes"][0]
+            build_id = AZP_BUILD_ID_RE.search(check_run["detailsUrl"]).group("buildId")
+            created_at = datetime.datetime.fromisoformat(check_suite[0]["createdAt"])
+            if check_run["name"] == "CI":
+                try:
+                    completed_at = datetime.datetime.fromisoformat(
+                        check_run["completedAt"]
+                    )
+                except TypeError:
+                    completed_at = None
+                conclusion = (check_run["conclusion"] or "").lower()
+                kwargs["ci"] = CI(
+                    build_id=build_id,
+                    completed=check_run["status"].lower() == "completed",
+                    passed=conclusion == "success",
+                    cancelled=conclusion == "canceled",
+                    completed_at=completed_at,
+                    created_at=created_at,
                 )
-            except TypeError:
-                completed_at = None
-            started_at = datetime.datetime.fromisoformat(
-                check_suite["checkRuns"]["nodes"][0]["startedAt"]
-            )
-            kwargs["ci"] = CI(
-                build_id=AZP_BUILD_ID_RE.search(
-                    check_suite["checkRuns"]["nodes"][0]["detailsUrl"]
-                ).group("buildId"),
-                completed=check_suite["status"].lower() == "completed",
-                passed=(check_suite["conclusion"] or "").lower() == "success",
-                completed_at=completed_at,
-                started_at=started_at,
-            )
+            else:
+                kwargs["ci"] = CI(
+                    build_id=build_id,
+                    created_at=created_at,
+                )
         else:
             kwargs["ci"] = CI()
 
