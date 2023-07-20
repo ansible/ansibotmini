@@ -216,9 +216,6 @@ commits(last:1) {
       checkSuites(last:1) {
         nodes {
           updatedAt
-          app {
-            slug
-          }
         }
       }
     }
@@ -337,9 +334,6 @@ last_commit: commits(last: 1) {
           }
           conclusion
           status
-          app {
-            name
-          }
         }
       }
     }
@@ -1187,12 +1181,12 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         < 5 * 60
     ):
         return
-    label = "needs_ci"
+
     if obj.ci.build_id is None:
         if "pre_azp" not in obj.labels:
-            actions.to_label.append(label)
+            actions.to_label.append("needs_ci")
     else:
-        actions.to_unlabel.append(label)
+        actions.to_unlabel.append("needs_ci")
         actions.to_unlabel.append("pre_azp")
 
 
@@ -1267,7 +1261,7 @@ def cancel_ci(build_id: int) -> None:
     logging.info("Cancelled with status_code: %d", resp.status_code)
 
 
-def bad_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def merge_commits(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
     if obj.merge_commits:
@@ -1416,7 +1410,7 @@ bot_funcs = [
     needs_rebase,
     stale_review,
     pr_from_upstream,
-    bad_pr,
+    merge_commits,
     linked_objs,
     needs_template,
     test_support_plugin,
@@ -1808,36 +1802,18 @@ def fetch_objects() -> dict[str, GH_OBJ]:
                     or days_since(cache[str(number)].last_triaged) >= STALE_ISSUE_DAYS
                 ]
 
-        if not number_map["issues"] and not number_map["prs"]:
-            return {}
+    data = {}
+    for number, updated_at in number_map["issues"]:
+        obj = fetch_object(number, Issue, "issue", updated_at)
+        data[str(obj.number)] = obj
+    for number, updated_at in number_map["prs"]:
+        obj = fetch_object(number, PR, "pullRequest", updated_at)
+        data[str(obj.number)] = obj
 
-        # FIXME setting max_workers to 1> appears to hit GraphQL API too fast
-        #       on faster machines resulting in 403 Forbidden after certain
-        #       number of requests
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            futures = []
-            for object_name, obj, data in (
-                ("issue", Issue, number_map["issues"]),
-                ("pullRequest", PR, number_map["prs"]),
-            ):
-                for number, updated_at in data:
-                    futures.append(
-                        executor.submit(
-                            fetch_object,
-                            number,
-                            obj,
-                            object_name,
-                            updated_at,
-                        )
-                    )
-
-            data = {}
-            for future in concurrent.futures.as_completed(futures):
-                obj = future.result()
-                data[str(obj.number)] = obj
-
+    if data:
+        with shelve.open(CACHE_FILENAME) as cache:
             cache.update(data)
-            return data
+    return data
 
 
 def daemon(
