@@ -329,6 +329,7 @@ last_commit: commits(last: 1) {
           checkRuns(last: 1) {
             nodes {
               detailsUrl
+              startedAt
               completedAt
             }
           }
@@ -422,6 +423,7 @@ class CI:
     completed: bool = False
     passed: bool = False
     completed_at: t.Optional[datetime.datetime] = None
+    started_at: t.Optional[datetime.datetime] = None
 
     def is_running(self) -> bool:
         return self.build_id is not None and not self.completed
@@ -1182,7 +1184,11 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     ):
         return
 
-    if obj.ci.build_id is None:
+    if obj.ci.build_id is None or (
+        obj.ci.is_running()
+        and (datetime.datetime.now(datetime.timezone.utc) - obj.ci.started_at).seconds
+        > 2 * 60 * 60
+    ):
         if "pre_azp" not in obj.labels:
             actions.to_label.append("needs_ci")
     else:
@@ -1749,6 +1755,9 @@ def fetch_object(
                 )
             except TypeError:
                 completed_at = None
+            started_at = datetime.datetime.fromisoformat(
+                check_suite["checkRuns"]["nodes"][0]["startedAt"]
+            )
             kwargs["ci"] = CI(
                 build_id=AZP_BUILD_ID_RE.search(
                     check_suite["checkRuns"]["nodes"][0]["detailsUrl"]
@@ -1756,6 +1765,7 @@ def fetch_object(
                 completed=check_suite["status"].lower() == "completed",
                 passed=(check_suite["conclusion"] or "").lower() == "success",
                 completed_at=completed_at,
+                started_at=started_at,
             )
         else:
             kwargs["ci"] = CI()
