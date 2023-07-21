@@ -1464,9 +1464,9 @@ def is_command_applied(name: str, obj: GH_OBJ, ctx: TriageContext) -> bool:
 
 def triage(
     objects: dict[str, GH_OBJ],
-    dry_run: t.Optional[bool] = None,
-    ask: t.Optional[bool] = None,
-    ignore_bot_skip: t.Optional[bool] = None,
+    dry_run: bool = False,
+    ask: bool = False,
+    ignore_bot_skip: bool = False,
 ) -> None:
     # FIXME cache TriageContext
     devel_file_list = [
@@ -1808,7 +1808,13 @@ def fetch_object_by_number(number: str) -> GH_OBJ:
     return obj
 
 
-def fetch_objects() -> dict[str, GH_OBJ]:
+def fetch_objects(force_all_from_cache: bool = False) -> dict[str, GH_OBJ]:
+    if force_all_from_cache:
+        with shelve.open(CACHE_FILENAME) as cache:
+            if data := dict(cache):
+                return data
+            raise RuntimeError("Empty cache")
+
     with shelve.open(CACHE_FILENAME) as cache:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             futures = {
@@ -1842,17 +1848,18 @@ def fetch_objects() -> dict[str, GH_OBJ]:
 
 
 def daemon(
-    dry_run: t.Optional[bool] = None,
-    generate_byfile: t.Optional[bool] = None,
-    ask: t.Optional[bool] = None,
-    ignore_bot_skip: t.Optional[bool] = None,
+    dry_run: bool = False,
+    generate_byfile: bool = False,
+    ask: bool = False,
+    ignore_bot_skip: bool = False,
+    force_all_from_cache: bool = False,
 ) -> None:
     global request_counter
     while True:
         logging.info("Starting triage")
         request_counter = 0
         start = time.time()
-        if objs := fetch_objects():
+        if objs := fetch_objects(force_all_from_cache):
             try:
                 triage(objs, dry_run, ask, ignore_bot_skip)
             finally:
@@ -1918,6 +1925,14 @@ def main() -> None:
         action="store_true",
         help="ignore bot_skip and bot_broken commands",
     )
+    parser.add_argument(
+        "--force-all-from-cache",
+        action="store_true",
+        help=(
+            "force triaging all issues and pull requests from cache, "
+            "for testing purposes, not applicable with --number"
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -1976,6 +1991,7 @@ def main() -> None:
                 generate_byfile=args.generate_byfile_page,
                 ask=args.ask,
                 ignore_bot_skip=args.ignore_bot_skip,
+                force_all_from_cache=args.force_all_from_cache,
             )
         except KeyboardInterrupt:
             print("Bye")
