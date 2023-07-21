@@ -400,7 +400,7 @@ class Issue:
     labels: dict[str, str]
     updated_at: datetime.datetime
     components: list[str]
-    last_triaged: datetime.datetime | None
+    last_triaged_at: t.Optional[datetime.datetime]
 
 
 @dataclass
@@ -409,8 +409,8 @@ class PR(Issue):
     files: list[str]
     mergeable: str
     changes_requested: bool
-    last_review: datetime.datetime
-    last_commit: datetime.datetime
+    last_reviewed_at: datetime.datetime
+    last_committed_at: datetime.datetime
     ci: CI
     from_repo: str
     merge_commits: list[str]
@@ -1164,8 +1164,8 @@ def needs_revision(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         return
     if (
         obj.changes_requested
-        and obj.last_review is not None
-        and obj.last_review > obj.last_commit
+        and obj.last_reviewed_at is not None
+        and obj.last_reviewed_at > obj.last_committed_at
     ) or not obj.ci.passed:
         actions.to_label.append("needs_revision")
     else:
@@ -1233,9 +1233,9 @@ def needs_rebase(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def stale_review(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, PR) or obj.last_review is None:
+    if not isinstance(obj, PR) or obj.last_reviewed_at is None:
         return
-    if obj.last_review < obj.last_commit:
+    if obj.last_reviewed_at < obj.last_committed_at:
         actions.to_label.append("stale_review")
     else:
         actions.to_unlabel.append("stale_review")
@@ -1523,7 +1523,7 @@ def triage(
 
         if not ignore_bot_skip:
             if is_command_applied("bot_broken", obj, ctx):
-                obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
+                obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
                 logging.info(
                     "Skipping %s %s (#%d) due to bot_broken",
                     obj.__class__.__name__,
@@ -1536,7 +1536,7 @@ def triage(
             if not dry_run:
                 remove_labels(obj, ["bot_broken"])
             if is_command_applied("bot_skip", obj, ctx):
-                obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
+                obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
                 logging.info(
                     "Skipping %s %s (#%d) due to bot_skip",
                     obj.__class__.__name__,
@@ -1619,7 +1619,7 @@ def triage(
             else:
                 logging.info("No actions to take")
 
-        obj.last_triaged = datetime.datetime.now(datetime.timezone.utc)
+        obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
         logging.info(
             "Done triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number
         )
@@ -1721,7 +1721,7 @@ def fetch_object(
         labels={node["name"]: node["id"] for node in o["labels"].get("nodes", [])},
         updated_at=updated_at,
         components=[],
-        last_triaged=None,
+        last_triaged_at=None,
     )
     if object_name == "pullRequest":
         kwargs["created_at"] = datetime.datetime.fromisoformat(o["createdAt"])
@@ -1737,14 +1737,14 @@ def fetch_object(
             if author not in reviews:
                 reviews[author] = state
         kwargs["changes_requested"] = "changes_requested" in reviews.values()
-        kwargs["last_review"] = max(
+        kwargs["last_reviewed_at"] = max(
             (r["updatedAt"] for r in o["reviews"]["nodes"]), default=None
         )
-        if kwargs["last_review"]:
-            kwargs["last_review"] = datetime.datetime.fromisoformat(
-                kwargs["last_review"]
+        if kwargs["last_reviewed_at"]:
+            kwargs["last_reviewed_at"] = datetime.datetime.fromisoformat(
+                kwargs["last_reviewed_at"]
             )
-        kwargs["last_commit"] = datetime.datetime.fromisoformat(
+        kwargs["last_committed_at"] = datetime.datetime.fromisoformat(
             o["last_commit"]["nodes"][0]["commit"]["committedDate"]
         )
         if check_suite := o["last_commit"]["nodes"][0]["commit"]["checkSuites"][
@@ -1820,9 +1820,10 @@ def fetch_objects(force_all_from_cache: bool = False) -> dict[str, GH_OBJ]:
                     (number, updated_at)
                     for number, updated_at in future.result()
                     if number not in cache
-                    or cache[str(number)].last_triaged is None
-                    or cache[str(number)].last_triaged < updated_at
-                    or days_since(cache[str(number)].last_triaged) >= STALE_ISSUE_DAYS
+                    or cache[str(number)].last_triaged_at is None
+                    or cache[str(number)].last_triaged_at < updated_at
+                    or days_since(cache[str(number)].last_triaged_at)
+                    >= STALE_ISSUE_DAYS
                 ]
 
     data = {}
