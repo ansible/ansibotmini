@@ -1096,15 +1096,7 @@ def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if isinstance(obj, PR):
         return
     if match := VERSION_RE.search(obj.body):
-        label_name = f"affects_{'.'.join(match.group(1).split('.')[:2])}"
-        if not any(
-            e
-            for e in obj.events
-            if e["name"] == "UnlabeledEvent"
-            and e["author"] in ctx.committers
-            and e["label"] == label_name
-        ):
-            actions.to_label.append(label_name)
+        actions.to_label.append(f"affects_{'.'.join(match.group(1).split('.')[:2])}")
 
 
 def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
