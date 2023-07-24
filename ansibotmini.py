@@ -145,8 +145,6 @@ NETWORK_FILES = frozenset(
     )
 )
 
-
-# TODO fetch from the actual template
 ISSUE_FEATURE_TEMPLATE_SECTIONS = frozenset(
     (
         "Summary",
@@ -1454,13 +1452,7 @@ def is_command_applied(name: str, obj: GH_OBJ, ctx: TriageContext) -> bool:
     return False
 
 
-def triage(
-    objects: dict[str, GH_OBJ],
-    dry_run: bool = False,
-    ask: bool = False,
-    ignore_bot_skip: bool = False,
-) -> None:
-    # FIXME cache TriageContext
+def get_triage_context() -> TriageContext:
     devel_file_list = [
         e["path"]
         for e in http_request(
@@ -1476,11 +1468,11 @@ def triage(
     v29_flatten_modules = []
     for f in v29_file_list:
         if f.startswith("lib/ansible/modules") and f.endswith((".py", ".ps1")):
-            v29_flatten_modules.append(
-                re.sub(FLATTEN_MODULES_RE, r"plugins/modules/\2", f)
-            )
-
-    ctx = TriageContext(
+            if (
+                possibly_flatten := re.sub(FLATTEN_MODULES_RE, r"plugins/modules/\2", f)
+            ) not in v29_file_list:
+                v29_flatten_modules.append(possibly_flatten)
+    return TriageContext(
         collections_list=http_request(COLLECTIONS_LIST_ENDPOINT).json(),
         collections_file_map=http_request(COLLECTIONS_FILEMAP_ENDPOINT).json(),
         committers=get_committers(),
@@ -1491,138 +1483,139 @@ def triage(
         v29_file_list=v29_file_list,
         v29_flatten_modules=v29_flatten_modules,
     )
-    for obj in objects.values():
-        logging.info(
-            "Triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number
-        )
-        logging.info(obj.url)
-        # commands
-        bodies = itertools.chain(
-            ((obj.author, obj.body, obj.updated_at),),
-            (
-                (e["author"], e["body"], e["updated_at"])
-                for e in obj.events
-                if e["name"] == "IssueComment"
-            ),
-        )
-        ctx.commands_found = collections.defaultdict(list)
-        for author, body, updated_at in bodies:
-            for command in COMMANDS_RE.findall(body):
-                if (
-                    command in {"bot_skip", "!bot_skip"}
-                    and author not in ctx.committers
-                ):
-                    continue
-                ctx.commands_found[command].append(Command(updated_at=updated_at))
-            if isinstance(obj, PR):
-                continue
-            for component in COMPONENT_COMMAND_RE.findall(body):
-                ctx.commands_found["component"].append(
-                    Command(updated_at=updated_at, arg=component)
-                )
 
-        if not ignore_bot_skip:
-            if is_command_applied("bot_broken", obj, ctx):
-                obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
-                logging.info(
-                    "Skipping %s %s (#%d) due to bot_broken",
-                    obj.__class__.__name__,
-                    obj.title,
-                    obj.number,
-                )
-                if not dry_run:
-                    add_labels(obj, ["bot_broken"])
+
+def triage(
+    obj: GH_OBJ,
+    ctx: TriageContext,
+    dry_run: bool = False,
+    ask: bool = False,
+    ignore_bot_skip: bool = False,
+) -> None:
+    logging.info("Triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number)
+    logging.info(obj.url)
+    # commands
+    bodies = itertools.chain(
+        ((obj.author, obj.body, obj.updated_at),),
+        (
+            (e["author"], e["body"], e["updated_at"])
+            for e in obj.events
+            if e["name"] == "IssueComment"
+        ),
+    )
+    ctx.commands_found = collections.defaultdict(list)
+    for author, body, updated_at in bodies:
+        for command in COMMANDS_RE.findall(body):
+            if command in {"bot_skip", "!bot_skip"} and author not in ctx.committers:
                 continue
+            ctx.commands_found[command].append(Command(updated_at=updated_at))
+        if isinstance(obj, PR):
+            continue
+        for component in COMPONENT_COMMAND_RE.findall(body):
+            ctx.commands_found["component"].append(
+                Command(updated_at=updated_at, arg=component)
+            )
+
+    if not ignore_bot_skip:
+        if is_command_applied("bot_broken", obj, ctx):
+            obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
+            logging.info(
+                "Skipping %s %s (#%d) due to bot_broken",
+                obj.__class__.__name__,
+                obj.title,
+                obj.number,
+            )
             if not dry_run:
-                remove_labels(obj, ["bot_broken"])
-            if is_command_applied("bot_skip", obj, ctx):
-                obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
-                logging.info(
-                    "Skipping %s %s (#%d) due to bot_skip",
-                    obj.__class__.__name__,
-                    obj.title,
-                    obj.number,
-                )
-                continue
-
-        # triage
-        actions = Actions()
-        for f in bot_funcs:
-            f(obj, actions, ctx)
-
-        # remove bot_closed for re-opened issues/prs
-        if "bot_closed" not in actions.to_label:
-            actions.to_unlabel.append("bot_closed")
-
-        logging.info("All potential actions:")
-        logging.info(pprint.pformat(actions))
-
-        actions.to_label = [
-            l
-            for l in actions.to_label
-            if l not in obj.labels
-            and not (
-                (l in LABLES_DO_NOT_OVERRIDE or l.startswith("affects_"))
-                and was_unlabeled_by_human(obj, l)
+                add_labels(obj, ["bot_broken"])
+            return
+        if not dry_run:
+            remove_labels(obj, ["bot_broken"])
+        if is_command_applied("bot_skip", obj, ctx):
+            obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
+            logging.info(
+                "Skipping %s %s (#%d) due to bot_skip",
+                obj.__class__.__name__,
+                obj.title,
+                obj.number,
             )
-        ]
-        actions.to_unlabel = [
-            l
-            for l in actions.to_unlabel
-            if l in obj.labels
-            and not (
-                (l in LABLES_DO_NOT_OVERRIDE or l.startswith("affects_"))
-                and was_labeled_by_human(obj, l)
-            )
-        ]
+            return
 
-        if common_labels := set(actions.to_label).intersection(actions.to_unlabel):
-            raise AssertionError(
-                f"The following labels were scheduled to be both added and removed {', '.join(common_labels)}"
-            )
+    # triage
+    actions = Actions()
+    for f in bot_funcs:
+        f(obj, actions, ctx)
 
-        if dry_run:
-            logging.info("Skipping taking actions due to --dry-run")
-        else:
-            if actions:
-                logging.info("Summary of actions to take:")
-                logging.info(pprint.pformat(actions))
+    # remove bot_closed for re-opened issues/prs
+    if "bot_closed" not in actions.to_label:
+        actions.to_unlabel.append("bot_closed")
 
-                if ask:
-                    user_input = input("Take actions? (y/n): ")
-                    take_actions = user_input.strip() == "y"
-                else:
-                    take_actions = True
+    logging.info("All potential actions:")
+    logging.info(pprint.pformat(actions))
 
-                if take_actions:
-                    if actions.to_label:
-                        add_labels(obj, actions.to_label)
-                    if actions.to_unlabel:
-                        remove_labels(obj, actions.to_unlabel)
-
-                    for comment in actions.comments:
-                        add_comment(obj, comment)
-
-                    if actions.cancel_ci:
-                        cancel_ci(obj.ci.build_id)
-
-                    if actions.close:
-                        logging.info(
-                            "%s #%d: closing", obj.__class__.__name__, obj.number
-                        )
-                        if isinstance(obj, PR):
-                            close_pr(obj.id)
-                        elif isinstance(obj, Issue):
-                            close_issue(obj.id, actions.close_reason)
-                else:
-                    logging.info("Skipping taking actions")
-            else:
-                logging.info("No actions to take")
-
-        obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
-        logging.info(
-            "Done triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number
+    actions.to_label = [
+        l
+        for l in actions.to_label
+        if l not in obj.labels
+        and not (
+            (l in LABLES_DO_NOT_OVERRIDE or l.startswith("affects_"))
+            and was_unlabeled_by_human(obj, l)
         )
+    ]
+    actions.to_unlabel = [
+        l
+        for l in actions.to_unlabel
+        if l in obj.labels
+        and not (
+            (l in LABLES_DO_NOT_OVERRIDE or l.startswith("affects_"))
+            and was_labeled_by_human(obj, l)
+        )
+    ]
+
+    if common_labels := set(actions.to_label).intersection(actions.to_unlabel):
+        raise AssertionError(
+            f"The following labels were scheduled to be both added and removed {', '.join(common_labels)}"
+        )
+
+    if dry_run:
+        logging.info("Skipping taking actions due to --dry-run")
+    else:
+        if actions:
+            logging.info("Summary of actions to take:")
+            logging.info(pprint.pformat(actions))
+
+            if ask:
+                user_input = input("Take actions? (y/n): ")
+                take_actions = user_input.strip() == "y"
+            else:
+                take_actions = True
+
+            if take_actions:
+                if actions.to_label:
+                    add_labels(obj, actions.to_label)
+                if actions.to_unlabel:
+                    remove_labels(obj, actions.to_unlabel)
+
+                for comment in actions.comments:
+                    add_comment(obj, comment)
+
+                if actions.cancel_ci:
+                    cancel_ci(obj.ci.build_id)
+
+                if actions.close:
+                    logging.info("%s #%d: closing", obj.__class__.__name__, obj.number)
+                    if isinstance(obj, PR):
+                        close_pr(obj.id)
+                    elif isinstance(obj, Issue):
+                        close_issue(obj.id, actions.close_reason)
+            else:
+                logging.info("Skipping taking actions")
+        else:
+            logging.info("No actions to take")
+
+    obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
+    logging.info(
+        "Done triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number
+    )
 
 
 def process_events(issue: dict[str, t.Any]) -> list[dict[str, str]]:
@@ -1800,12 +1793,15 @@ def fetch_object_by_number(number: str) -> GH_OBJ:
     return obj
 
 
-def fetch_objects(force_all_from_cache: bool = False) -> dict[str, GH_OBJ]:
+def fetch_objects(
+    force_all_from_cache: bool = False,
+) -> t.Generator[GH_OBJ, None, None]:
     if force_all_from_cache:
         with shelve.open(CACHE_FILENAME) as cache:
-            if data := dict(cache):
-                return data
-            raise RuntimeError("Empty cache")
+            if not (data := dict(cache)):
+                raise RuntimeError("Empty cache")
+        for obj in data.values():
+            yield obj
 
     with shelve.open(CACHE_FILENAME) as cache:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
@@ -1826,18 +1822,11 @@ def fetch_objects(force_all_from_cache: bool = False) -> dict[str, GH_OBJ]:
                     >= STALE_ISSUE_DAYS
                 ]
 
-    data = {}
     for number, updated_at in number_map["issues"]:
-        obj = fetch_object(number, Issue, "issue", updated_at)
-        data[str(obj.number)] = obj
-    for number, updated_at in number_map["prs"]:
-        obj = fetch_object(number, PR, "pullRequest", updated_at)
-        data[str(obj.number)] = obj
+        yield fetch_object(number, Issue, "issue", updated_at)
 
-    if data:
-        with shelve.open(CACHE_FILENAME) as cache:
-            cache.update(data)
-    return data
+    for number, updated_at in number_map["prs"]:
+        yield fetch_object(number, PR, "pullRequest", updated_at)
 
 
 def daemon(
@@ -1848,34 +1837,35 @@ def daemon(
     force_all_from_cache: bool = False,
 ) -> None:
     global request_counter
+
+    ctx = get_triage_context()
+    triage_ctx_created_at = datetime.datetime.now(datetime.timezone.utc)
     while True:
         logging.info("Starting triage")
         request_counter = 0
         start = time.time()
-        if objs := fetch_objects(force_all_from_cache):
-            try:
-                triage(objs, dry_run, ask, ignore_bot_skip)
-            finally:
-                logging.info("Caching triaged issues")
+
+        # refresh triage context
+        if days_since(triage_ctx_created_at) > 1:
+            ctx = get_triage_context()
+
+        data, n = {}, 0
+        try:
+            for n, obj in enumerate(fetch_objects(force_all_from_cache)):
+                triage(obj, ctx, dry_run, ask, ignore_bot_skip)
+                data[str(obj.number)] = obj
+        finally:
+            if n:
                 with shelve.open(CACHE_FILENAME) as cache:
-                    for number, obj in objs.items():
-                        cache[str(number)] = obj
-                logging.info(
-                    "Took %.2f seconds to triage %d issues/PRs and %d HTTP requests",
-                    time.time() - start,
-                    len(objs),
-                    request_counter,
-                )
+                    cache.update(data)
                 if generate_byfile:
                     logging.info("Generating %s", BYFILE_PAGE_FILENAME)
                     generate_byfile_page()
                     logging.info("Done generating %s", BYFILE_PAGE_FILENAME)
-        else:
-            logging.info("No new issues/PRs")
+
             logging.info(
-                "Took %.2f seconds to check for new issues/PRs and %d HTTP requests",
-                time.time() - start,
-                request_counter,
+                f"Took {time.time() - start:.2f} seconds and {request_counter} HTTP requests to check for new/stale "
+                f"issues/PRs{f' and triage {n} of them.' if n else '.'}",
             )
         logging.info("Sleeping for %d minutes", SLEEP_SECONDS // 60)
         time.sleep(SLEEP_SECONDS)
@@ -1970,9 +1960,9 @@ def main() -> None:
         sys.exit(1)
 
     if args.number:
-        obj = fetch_object_by_number(args.number)
         triage(
-            {args.number: obj},
+            fetch_object_by_number(args.number),
+            get_triage_context(),
             dry_run=args.dry_run,
             ask=args.ask,
             ignore_bot_skip=args.ignore_bot_skip,
