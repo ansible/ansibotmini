@@ -94,7 +94,7 @@ VERSION_RE = re.compile(r"ansible\s\[core\s([^]]+)]")
 COMPONENT_COMMAND_RE = re.compile(
     r"^(?:@ansibot\s)?!?component\s([=+-]\S+)$", flags=re.MULTILINE
 )
-FLATTEN_MODULES_RE = re.compile(r"lib/ansible/modules/(.*)/(.+\.(?:py|ps1))")
+FLATTEN_MODULES_RE = re.compile(r"(lib/ansible/modules)/(.*)(/.+\.(?:py|ps1))")
 
 VALID_COMMANDS = (
     "bot_skip",
@@ -756,7 +756,7 @@ def process_component(data):
 
 
 def flatten_module_path(c: str) -> str:
-    return re.sub(r"(lib/ansible/modules)/(.*)(/.+\.(?:py|ps1))", r"\1\3", c)
+    return re.sub(FLATTEN_MODULES_RE, r"\1\3", c)
 
 
 def template_comment(template_name: str, sub_map: t.Optional[t.Mapping] = None) -> str:
@@ -1505,9 +1505,7 @@ def get_triage_context() -> TriageContext:
     v29_flatten_modules = []
     for f in v29_file_list:
         if f.startswith("lib/ansible/modules") and f.endswith((".py", ".ps1")):
-            if (
-                possibly_flatten := re.sub(FLATTEN_MODULES_RE, r"plugins/modules/\2", f)
-            ) not in v29_file_list:
+            if (possibly_flatten := flatten_module_path(f)) not in v29_file_list:
                 v29_flatten_modules.append(possibly_flatten)
 
     return TriageContext(
