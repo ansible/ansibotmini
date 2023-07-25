@@ -28,6 +28,7 @@ def ctx():
             "community.general",
             "community.vmware",
         ],
+        labels_to_ids_map={},
     )
 
 

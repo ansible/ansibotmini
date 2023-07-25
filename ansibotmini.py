@@ -103,6 +103,40 @@ VALID_COMMANDS = (
     "!bot_broken",
     "!needs_collection_redirect",
 )
+
+VALID_LABELS = {
+    # label ids of previous versions of affects_* would be downloaded on demand
+    "affects_2.9",
+    "affects_2.10",
+    "affects_2.11",
+    "affects_2.12",
+    "affects_2.13",
+    "affects_2.14",
+    "affects_2.15",
+    "backport",
+    "bot_broken",
+    "bot_closed",
+    "bug",
+    "ci_verified",
+    "feature",
+    "has_issue",
+    "has_pr",
+    "merge_commit",
+    "module",
+    "needs_ci",
+    "needs_info",
+    "needs_rebase",
+    "needs_revision",
+    "needs_template",
+    "needs_triage",
+    "networking",
+    "pre_azp",
+    "stale_ci",
+    "stale_review",
+    "test",
+    "waiting_on_contributor",
+}
+
 COMMANDS_RE = re.compile(
     f"^(?:@ansibot\s)?({'|'.join(VALID_COMMANDS)})\s*$", flags=re.MULTILINE
 )
@@ -463,6 +497,7 @@ class TriageContext:
     v29_file_list: list[str]
     v29_flatten_modules: list[str]
     collections_to_redirect: list[str]
+    labels_to_ids_map: dict[str, str]
     commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
 
 
@@ -550,8 +585,7 @@ def get_label_id(name: str) -> str:
     return resp.json()["data"]["repository"]["label"]["id"]
 
 
-def add_labels(obj: GH_OBJ, labels: list[str]) -> None:
-    # TODO gather label IDs globally from processed issues to limit API calls to get IDs
+def add_labels(obj: GH_OBJ, labels: list[str], ctx: TriageContext) -> None:
     query = """
     mutation($input: AddLabelsToLabelableInput!) {
       addLabelsToLabelable(input:$input) {
@@ -564,7 +598,10 @@ def add_labels(obj: GH_OBJ, labels: list[str]) -> None:
             "query": query,
             "variables": {
                 "input": {
-                    "labelIds": [get_label_id(label) for label in labels],
+                    "labelIds": [
+                        ctx.labels_to_ids_map.get(label, get_label_id(label))
+                        for label in labels
+                    ],
                     "labelableId": obj.id,
                 },
             },
@@ -1472,16 +1509,18 @@ def get_triage_context() -> TriageContext:
                 possibly_flatten := re.sub(FLATTEN_MODULES_RE, r"plugins/modules/\2", f)
             ) not in v29_file_list:
                 v29_flatten_modules.append(possibly_flatten)
+
     return TriageContext(
         collections_list=http_request(COLLECTIONS_LIST_ENDPOINT).json(),
         collections_file_map=http_request(COLLECTIONS_FILEMAP_ENDPOINT).json(),
         committers=get_committers(),
-        collections_to_redirect=http_request(COLLECTIONS_TO_REDIRECT_ENDPOINT)
-        .raw_data.decode()
-        .splitlines(),
         devel_file_list=devel_file_list,
         v29_file_list=v29_file_list,
         v29_flatten_modules=v29_flatten_modules,
+        collections_to_redirect=http_request(COLLECTIONS_TO_REDIRECT_ENDPOINT)
+        .raw_data.decode()
+        .splitlines(),
+        labels_to_ids_map={n: get_label_id(n) for n in VALID_LABELS},
     )
 
 
@@ -1526,7 +1565,7 @@ def triage(
                 obj.number,
             )
             if not dry_run:
-                add_labels(obj, ["bot_broken"])
+                add_labels(obj, ["bot_broken"], ctx)
             return
         if not dry_run:
             remove_labels(obj, ["bot_broken"])
@@ -1591,7 +1630,7 @@ def triage(
 
             if take_actions:
                 if actions.to_label:
-                    add_labels(obj, actions.to_label)
+                    add_labels(obj, actions.to_label, ctx)
                 if actions.to_unlabel:
                     remove_labels(obj, actions.to_unlabel)
 
