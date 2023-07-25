@@ -448,6 +448,7 @@ class PR(Issue):
     merge_commits: list[str]
     has_issue: bool
     created_at: datetime.datetime
+    pushed_at: t.Optional[datetime.datetime]
 
 
 @dataclass
@@ -1210,14 +1211,20 @@ def needs_revision(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if (
         not isinstance(obj, PR)
+        or "merge_commit" in actions.to_label
+        or "needs_rebase" in actions.to_label
         or (datetime.datetime.now(datetime.timezone.utc) - obj.created_at).seconds
         < 5 * 60
     ):
         return
 
     if (
-        obj.ci.build_id is None
-        or (obj.ci.cancelled and "merge_commit" not in actions.to_label)
+        (
+            obj.ci.build_id is None
+            and (datetime.datetime.now(datetime.timezone.utc) - obj.pushed_at).seconds
+            > 5 * 60
+        )
+        or obj.ci.cancelled
         or (
             obj.ci.is_running()
             and (
@@ -1447,11 +1454,11 @@ bot_funcs = [
     merge_commits,  # order matters, must be before needs_ci
     ci_comments,  # order matters, must be before needs_ci
     needs_revision,
+    needs_rebase,  # order matters, must be before needs_ci
     needs_ci,
     stale_ci,
     backport,
     is_module,
-    needs_rebase,
     stale_review,
     pr_from_upstream,
     linked_objs,
@@ -1531,6 +1538,17 @@ def triage(
 ) -> None:
     logging.info("Triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number)
     logging.info(obj.url)
+
+    if isinstance(obj, PR):
+        with shelve.open(CACHE_FILENAME) as cache:
+            cached_obj = cache.get(str(obj.number))
+        if cached_obj is None:
+            obj.pushed_at = obj.last_committed_at
+        elif obj.last_committed_at != cached_obj.last_committed_at:
+            obj.pushed_at = datetime.datetime.now(datetime.timezone.utc)
+        else:
+            obj.pushed_at = cached_obj.pushed_at
+
     # commands
     bodies = itertools.chain(
         ((obj.author, obj.body, obj.updated_at),),
@@ -1817,6 +1835,7 @@ def fetch_object(
             if len(n["commit"]["parents"]["nodes"]) > 1
         ]
         kwargs["has_issue"] = len(o["closingIssuesReferences"]["nodes"]) > 0
+        kwargs["pushed_at"] = None
 
     return obj(**kwargs)
 
@@ -1826,6 +1845,7 @@ def fetch_object_by_number(number: str) -> GH_OBJ:
         obj = fetch_object(number, Issue, "issue")
     except ValueError:
         obj = fetch_object(number, PR, "pullRequest")
+        obj.pushed_at = obj.last_committed_at
 
     return obj
 
