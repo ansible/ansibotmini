@@ -1211,7 +1211,7 @@ def needs_revision(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if (
         not isinstance(obj, PR)
-        or "merge_commit" in actions.to_label
+        # or "merge_commit" in actions.to_label
         or "needs_rebase" in actions.to_label
         or (datetime.datetime.now(datetime.timezone.utc) - obj.created_at).seconds
         < 5 * 60
@@ -1451,7 +1451,7 @@ bot_funcs = [
     waiting_on_contributor,
     needs_info,
     match_version,
-    merge_commits,  # order matters, must be before needs_ci
+    # merge_commits,  # order matters, must be before needs_ci
     ci_comments,  # order matters, must be before needs_ci
     needs_revision,
     needs_rebase,  # order matters, must be before needs_ci
