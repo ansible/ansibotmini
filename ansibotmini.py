@@ -1908,7 +1908,7 @@ def daemon(
 
         data, n = {}, 0
         try:
-            for n, obj in enumerate(fetch_objects(force_all_from_cache)):
+            for n, obj in enumerate(fetch_objects(force_all_from_cache), 1):
                 triage(obj, ctx, dry_run, ask, ignore_bot_skip)
                 data[str(obj.number)] = obj
         finally:
