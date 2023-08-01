@@ -1124,7 +1124,9 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 def match_object_type(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if match := OBJ_TYPE_RE.search(obj.body):
         data = re.sub(r"~[^~]+~", "", match.group(1).lower()).lower()
-        for m in re.findall(r"\b(feature|bug|test)\b", data, flags=re.MULTILINE):
+        for m in re.findall(r"\b(feature|bug|test|bugfix)\b", data, flags=re.MULTILINE):
+            if m == "bugfix":
+                m = "bug"
             actions.to_label.append(m)
 
 
