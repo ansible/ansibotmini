@@ -519,6 +519,7 @@ def http_request(
     if headers is None:
         headers = {}
 
+    wait_seconds = 10
     for i in range(retries):
         try:
             with urllib.request.urlopen(
@@ -546,13 +547,25 @@ def http_request(
         except urllib.error.HTTPError as e:
             logging.info("%s %s %s", method, url, e)
             if e.status >= 500 and i < retries - 1:
-                logging.info("Retrying the request...")
+                logging.info(
+                    f"Waiting for {wait_seconds} seconds and retrying the request..."
+                )
+                time.sleep(wait_seconds)
                 continue
             return Response(
                 status_code=e.status,
                 reason=e.reason,
                 raw_data=b"",
             )
+        except (TimeoutError, urllib.error.URLError) as e:
+            logging.info("%s %s %s", method, url, e)
+            if i < retries - 1:
+                logging.info(
+                    f"Waiting for {wait_seconds} seconds and retrying the request..."
+                )
+                time.sleep(wait_seconds)
+                continue
+            raise
 
 
 def send_query(data: dict[str, t.Any]) -> Response:
