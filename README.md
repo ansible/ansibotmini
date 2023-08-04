@@ -78,7 +78,7 @@ To use a command leave a comment on an issue/PR containing the correct form of t
 
 ## Installation
 ```
-$ git clone https://github.com/mkrizek/ansibotmini.git
+$ git clone https://github.com/ansible/ansibotmini.git
 $ cd ansibotmini
 ```
 
@@ -124,4 +124,4 @@ Please reach out via the typical communication channels: https://docs.ansible.co
 
 
 ## Found a bug?
-Please create an issue via https://github.com/mkrizek/ansibotmini/issues/new.
+Please create an issue via https://github.com/ansible/ansibotmini/issues/new.
