@@ -90,7 +90,10 @@ COMPONENT_RE = re.compile(
 OBJ_TYPE_RE = re.compile(
     r"#{3,5}\sissue\stype(.+?)(?=#{3,5}|$)", flags=re.IGNORECASE | re.DOTALL
 )
-VERSION_RE = re.compile(r"ansible\s\[core\s([^]]+)]")
+VERSION_RE = re.compile(
+    r"#{3,5}\sansible\sversion(.+?)(?=#{3,5}|$)", flags=re.IGNORECASE | re.DOTALL
+)
+VERSION_OUTPUT_RE = re.compile(r"ansible\s\[core\s([^]]+)]")
 COMPONENT_COMMAND_RE = re.compile(
     r"^(?:@ansibot\s)?!?component\s([=+-]\S+)$", flags=re.MULTILINE
 )
@@ -1147,7 +1150,10 @@ def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if isinstance(obj, PR):
         return
     if match := VERSION_RE.search(obj.body):
-        actions.to_label.append(f"affects_{'.'.join(match.group(1).split('.')[:2])}")
+        if match := VERSION_OUTPUT_RE.search(match.group(1)):
+            actions.to_label.append(
+                f"affects_{'.'.join(match.group(1).split('.')[:2])}"
+            )
 
 
 def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
