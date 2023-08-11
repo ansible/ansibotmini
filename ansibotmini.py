@@ -1249,7 +1249,8 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         or (
             obj.ci.is_running()
             and (
-                datetime.datetime.now(datetime.timezone.utc) - obj.ci.created_at
+                datetime.datetime.now(datetime.timezone.utc)
+                - max(obj.pushed_at, obj.ci.created_at)
             ).seconds
             > 2 * 60 * 60
         )
