@@ -1927,6 +1927,7 @@ def daemon(
         # refresh triage context
         if days_since(triage_ctx_created_at) > 1:
             ctx = get_triage_context()
+            triage_ctx_created_at = datetime.datetime.now(datetime.timezone.utc)
 
         data, n = {}, 0
         try:
