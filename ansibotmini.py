@@ -1257,6 +1257,10 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     ):
         if "pre_azp" not in obj.labels:
             actions.to_label.append("needs_ci")
+            logging.info(
+                "Adding needs_ci: PR created_at: '%s', PR pushed at: '%s', PR CI: '%s'"
+                % (obj.created_at, obj.pushed_at, obj.ci)
+            )
     else:
         actions.to_unlabel.append("needs_ci")
         actions.to_unlabel.append("pre_azp")
