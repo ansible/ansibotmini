@@ -361,7 +361,6 @@ last_commit: commits(last: 1) {
       committedDate
       checkSuites(last: 1) {
         nodes {
-          createdAt
           checkRuns(last: 1) {
             nodes {
               name
@@ -369,6 +368,7 @@ last_commit: commits(last: 1) {
               completedAt
               conclusion
               status
+              startedAt
             }
           }
         }
@@ -461,7 +461,7 @@ class CI:
     passed: bool = False
     cancelled: bool = False
     completed_at: t.Optional[datetime.datetime] = None
-    created_at: t.Optional[datetime.datetime] = None
+    started_at: t.Optional[datetime.datetime] = None
 
     def is_running(self) -> bool:
         return self.build_id is not None and not self.completed
@@ -1249,8 +1249,7 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         or (
             obj.ci.is_running()
             and (
-                datetime.datetime.now(datetime.timezone.utc)
-                - max(obj.pushed_at, obj.ci.created_at)
+                datetime.datetime.now(datetime.timezone.utc) - obj.ci.started_at
             ).seconds
             > 2 * 60 * 60
         )
@@ -1826,7 +1825,7 @@ def fetch_object(
         ]:
             check_run = check_suite[0]["checkRuns"]["nodes"][0]
             build_id = AZP_BUILD_ID_RE.search(check_run["detailsUrl"]).group("buildId")
-            created_at = datetime.datetime.fromisoformat(check_suite[0]["createdAt"])
+            started_at = datetime.datetime.fromisoformat(check_run["startedAt"])
             if check_run["name"] == "CI":
                 try:
                     completed_at = datetime.datetime.fromisoformat(
@@ -1841,12 +1840,11 @@ def fetch_object(
                     passed=conclusion == "success",
                     cancelled=conclusion == "canceled",
                     completed_at=completed_at,
-                    created_at=created_at,
+                    started_at=started_at,
                 )
             else:
                 kwargs["ci"] = CI(
                     build_id=build_id,
-                    created_at=created_at,
                 )
         else:
             kwargs["ci"] = CI()
