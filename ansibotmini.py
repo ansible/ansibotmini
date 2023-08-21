@@ -1845,6 +1845,7 @@ def fetch_object(
             else:
                 kwargs["ci"] = CI(
                     build_id=build_id,
+                    started_at=started_at,
                 )
         else:
             kwargs["ci"] = CI()
