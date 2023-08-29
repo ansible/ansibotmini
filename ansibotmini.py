@@ -1892,6 +1892,7 @@ def fetch_objects(
                 executor.submit(get_gh_objects, "pullRequests"): "prs",
             }
             number_map = collections.defaultdict(list)
+            open_numbers = []
             for future in concurrent.futures.as_completed(futures):
                 issue_type = futures[future]
                 number_map[issue_type] = [
@@ -1903,6 +1904,10 @@ def fetch_objects(
                     or days_since(cache[str(number)].last_triaged_at)
                     >= STALE_ISSUE_DAYS
                 ]
+                open_numbers.extend([str(r[0]) for r in future.result()])
+            for number in cache.keys():
+                if number in cache and number not in open_numbers:
+                    del cache[number]
 
     for number, updated_at in number_map["issues"]:
         yield fetch_object(number, Issue, "issue", updated_at)
