@@ -551,7 +551,7 @@ def http_request(
             logging.info("%s %s %s", method, url, e)
             if e.status >= 500 and i < retries - 1:
                 logging.info(
-                    f"Waiting for {wait_seconds} seconds and retrying the request..."
+                    "Waiting for %d seconds and retrying the request...", wait_seconds
                 )
                 time.sleep(wait_seconds)
                 continue
@@ -564,7 +564,7 @@ def http_request(
             logging.info("%s %s %s", method, url, e)
             if i < retries - 1:
                 logging.info(
-                    f"Waiting for {wait_seconds} seconds and retrying the request..."
+                    "Waiting for %d seconds and retrying the request...", wait_seconds
                 )
                 time.sleep(wait_seconds)
                 continue
@@ -1257,8 +1257,10 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         if "pre_azp" not in obj.labels:
             actions.to_label.append("needs_ci")
             logging.info(
-                "Adding needs_ci: PR created_at: '%s', PR pushed at: '%s', PR CI: '%s'"
-                % (obj.created_at, obj.pushed_at, obj.ci)
+                "Adding needs_ci: PR created_at: '%s', PR pushed at: '%s', PR CI: '%s'",
+                obj.created_at,
+                obj.pushed_at,
+                obj.ci,
             )
     else:
         actions.to_unlabel.append("needs_ci")
@@ -1703,10 +1705,10 @@ def process_events(issue: dict[str, t.Any]) -> list[dict[str, str]]:
     for node in issue["timelineItems"]["nodes"]:
         if node is None:
             continue
-        event = dict(
-            name=node["__typename"],
-            created_at=datetime.datetime.fromisoformat(node["createdAt"]),
-        )
+        event = {
+            "name": node["__typename"],
+            "created_at": datetime.datetime.fromisoformat(node["createdAt"]),
+        }
         if node["__typename"] in ["LabeledEvent", "UnlabeledEvent"]:
             event["label"] = node["label"]["name"]
             event["author"] = node["actor"]["login"]
@@ -1783,19 +1785,19 @@ def fetch_object(
     if o is None:
         raise ValueError(f"{number} not found")
 
-    kwargs = dict(
-        id=o["id"],
-        author=o["author"]["login"] if o["author"] else "ghost",
-        number=o["number"],
-        title=o["title"],
-        body=o["body"],
-        url=o["url"],
-        events=process_events(o),
-        labels={node["name"]: node["id"] for node in o["labels"].get("nodes", [])},
-        updated_at=updated_at,
-        components=[],
-        last_triaged_at=None,
-    )
+    kwargs = {
+        "id": o["id"],
+        "author": o["author"]["login"] if o["author"] else "ghost",
+        "number": o["number"],
+        "title": o["title"],
+        "body": o["body"],
+        "url": o["url"],
+        "events": process_events(o),
+        "labels": {node["name"]: node["id"] for node in o["labels"].get("nodes", [])},
+        "updated_at": updated_at,
+        "components": [],
+        "last_triaged_at": None,
+    }
     if object_name == "pullRequest":
         kwargs["created_at"] = datetime.datetime.fromisoformat(o["createdAt"])
         kwargs["branch"] = o["baseRef"]["name"]
