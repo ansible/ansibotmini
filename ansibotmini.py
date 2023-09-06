@@ -948,7 +948,8 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 case "=":
                     existing_components = [path]
                 case "+":
-                    existing_components.append(path)
+                    if path not in existing_components:
+                        existing_components.append(path)
                 case "-":
                     if path in existing_components:
                         existing_components.remove(path)
