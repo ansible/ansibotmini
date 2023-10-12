@@ -95,7 +95,7 @@ VERSION_RE = re.compile(
 )
 VERSION_OUTPUT_RE = re.compile(r"ansible\s\[core\s([^]]+)]")
 COMPONENT_COMMAND_RE = re.compile(
-    r"^(?:@ansibot\s)?!?component\s([=+-]\S+)$", flags=re.MULTILINE
+    r"^(?:@ansibot\s)?!?component\s([=+-]\S+)\s*$", flags=re.MULTILINE
 )
 FLATTEN_MODULES_RE = re.compile(r"(lib/ansible/modules)/(.*)(/.+\.(?:py|ps1))")
 
