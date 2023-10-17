@@ -527,6 +527,13 @@ def http_request(
     wait_seconds = 10
     for i in range(retries):
         try:
+            request_counter += 1
+            logging.info(
+                "http request no. %d: %s %s",
+                request_counter,
+                method,
+                url,
+            )
             with urllib.request.urlopen(
                 urllib.request.Request(
                     url,
@@ -535,12 +542,8 @@ def http_request(
                     method=method.upper(),
                 ),
             ) as response:
-                request_counter += 1
                 logging.info(
-                    "http request no. %d: %s %s: %d, %s",
-                    request_counter,
-                    method,
-                    url,
+                    "response: %d, %s",
                     response.status,
                     response.reason,
                 )
@@ -550,7 +553,7 @@ def http_request(
                     raw_data=response.read(),
                 )
         except urllib.error.HTTPError as e:
-            logging.info("%s %s %s", method, url, e)
+            logging.info(e)
             if e.status >= 500 and i < retries - 1:
                 logging.info(
                     "Waiting for %d seconds and retrying the request...", wait_seconds
@@ -563,7 +566,7 @@ def http_request(
                 raw_data=b"",
             )
         except (TimeoutError, urllib.error.URLError) as e:
-            logging.info("%s %s %s", method, url, e)
+            logging.info(e)
             if i < retries - 1:
                 logging.info(
                     "Waiting for %d seconds and retrying the request...", wait_seconds
