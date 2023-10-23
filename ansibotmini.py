@@ -1164,7 +1164,8 @@ def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             major_version = ".".join(match.group(1).split(".")[:2])
             actions.to_label.append(f"affects_{major_version}")
             if (
-                "bug" in actions.to_label
+                is_new_issue(obj)  # prevent spamming half the repo
+                and "bug" in actions.to_label
                 and major_version not in ctx.supported_bugfix_versions
             ):
                 actions.comments.append(
