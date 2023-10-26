@@ -444,7 +444,7 @@ class Issue:
 class PR(Issue):
     branch: str
     files: list[str]
-    mergeable: str
+    mergeable: bool
     changes_requested: bool
     last_reviewed_at: datetime.datetime
     last_committed_at: datetime.datetime
@@ -1243,6 +1243,7 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         or (datetime.datetime.now(datetime.timezone.utc) - obj.created_at).seconds
         < 5 * 60
     ):
+        actions.to_unlabel.append("needs_ci")
         return
 
     if (
@@ -1301,7 +1302,7 @@ def is_module(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 def needs_rebase(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
-    if obj.mergeable == "conflicting":
+    if not obj.mergeable:
         actions.to_label.append("needs_rebase")
     else:
         actions.to_unlabel.append("needs_rebase")
@@ -1808,7 +1809,7 @@ def fetch_object(
         kwargs["created_at"] = datetime.datetime.fromisoformat(o["createdAt"])
         kwargs["branch"] = o["baseRef"]["name"]
         kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
-        kwargs["mergeable"] = o["mergeable"].lower()
+        kwargs["mergeable"] = o["mergeable"].lower() == "mergeable"
         reviews = {}
         for review in reversed(o["reviews"]["nodes"]):
             state = review["state"].lower()
