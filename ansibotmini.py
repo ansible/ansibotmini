@@ -1546,7 +1546,7 @@ def is_command_applied(name: str, obj: GH_OBJ, ctx: TriageContext) -> bool:
     return False
 
 
-def get_supported_bugfix_versions():
+def get_supported_bugfix_versions() -> list[str]:
     version_to_prerelease_map: dict[str, bool] = collections.defaultdict(lambda: True)
     for release in (
         http_request("https://pypi.org/pypi/ansible-core/json")
