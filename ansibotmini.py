@@ -32,6 +32,8 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 
+import packaging.version
+
 try:
     import sentry_sdk
 except ImportError:
@@ -58,6 +60,7 @@ AZP_BUILD_ID_RE = re.compile(
     r"https://dev\.azure\.com/(?P<organization>[^/]+)/(?P<project>[^/]+)/_build/results\?buildId=(?P<buildId>[0-9]+)",
 )
 
+ANSIBLE_CORE_PYPI_URL = "https://pypi.org/pypi/ansible-core/json"
 GALAXY_URL = "https://galaxy.ansible.com/"
 GITHUB_GRAPHQL_URL = "https://api.github.com/graphql"
 COLLECTIONS_LIST_ENDPOINT = "https://sivel.eng.ansible.com/api/v1/collections/list"
@@ -504,6 +507,7 @@ class TriageContext:
     v29_flatten_modules: list[str]
     collections_to_redirect: list[str]
     labels_to_ids_map: dict[str, str]
+    supported_bugfix_versions: list[str]
     commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
 
 
@@ -1157,9 +1161,22 @@ def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         return
     if match := VERSION_RE.search(obj.body):
         if match := VERSION_OUTPUT_RE.search(match.group(1)):
-            actions.to_label.append(
-                f"affects_{'.'.join(match.group(1).split('.')[:2])}"
-            )
+            major_version = ".".join(match.group(1).split(".")[:2])
+            actions.to_label.append(f"affects_{major_version}")
+            if (
+                is_new_issue(obj)  # prevent spamming half the repo
+                and "bug" in actions.to_label
+                and major_version not in ctx.supported_bugfix_versions
+            ):
+                actions.comments.append(
+                    template_comment(
+                        "unsupported_version",
+                        {
+                            "author": obj.author,
+                            "version_reported": major_version,
+                        },
+                    )
+                )
 
 
 def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
@@ -1530,6 +1547,36 @@ def is_command_applied(name: str, obj: GH_OBJ, ctx: TriageContext) -> bool:
     return False
 
 
+def get_supported_bugfix_versions() -> list[str]:
+    version_to_prerelease_map: dict[str, bool] = collections.defaultdict(lambda: True)
+    for release in (
+        http_request("https://pypi.org/pypi/ansible-core/json")
+        .json()
+        .get("releases", [])
+    ):
+        try:
+            v = packaging.version.Version(release)
+        except ValueError:
+            continue
+        version_to_prerelease_map[f"{v.major}.{v.minor}"] &= v.is_prerelease
+
+    versions_sorted: list[str] = sorted(
+        version_to_prerelease_map.keys(), key=packaging.version.Version, reverse=True
+    )
+    latest_version_is_prerelease = version_to_prerelease_map[versions_sorted[0]]
+
+    # stable, stable-1, potentially prerelease
+    supported_bugfix_versions = [
+        v for v in versions_sorted[: 2 + int(latest_version_is_prerelease)]
+    ]
+    # devel
+    latest = packaging.version.Version(versions_sorted[0])
+    # NOTE assumes ansible-core is not 3.x :-|
+    supported_bugfix_versions[:0] = [f"{latest.major}.{latest.minor + 1}"]
+
+    return supported_bugfix_versions
+
+
 def get_triage_context() -> TriageContext:
     devel_file_list = [
         e["path"]
@@ -1559,6 +1606,7 @@ def get_triage_context() -> TriageContext:
         collections_to_redirect=http_request(COLLECTIONS_TO_REDIRECT_ENDPOINT)
         .raw_data.decode()
         .splitlines(),
+        supported_bugfix_versions=get_supported_bugfix_versions(),
         labels_to_ids_map={n: get_label_id(n) for n in VALID_LABELS},
     )
 
