@@ -96,7 +96,7 @@ OBJ_TYPE_RE = re.compile(
 VERSION_RE = re.compile(
     r"#{3,5}\sansible\sversion(.+?)(?=#{3,5}|$)", flags=re.IGNORECASE | re.DOTALL
 )
-VERSION_OUTPUT_RE = re.compile(r"ansible\s\[core\s([^]]+)]")
+VERSION_OUTPUT_RE = re.compile(r"ansible\s(?:\[core\s)?(\d+.\d+\.\d+)")
 COMPONENT_COMMAND_RE = re.compile(
     r"^(?:@ansibot\s)?!?component\s([=+-]\S+)\s*$", flags=re.MULTILINE
 )
