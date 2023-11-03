@@ -23,6 +23,7 @@ import pprint
 import re
 import shelve
 import string
+import subprocess
 import sys
 import time
 import typing as t
@@ -39,7 +40,12 @@ try:
 except ImportError:
     sentry_sdk = None
 
-__version__ = "0.0.1"
+try:
+    __version__ = subprocess.check_output(
+        ("git", "rev-parse", "HEAD"), text=True
+    ).strip()
+except subprocess.CalledProcessError:
+    __version__ = "unknown"
 
 minimal_required_python_version = (3, 11)
 if sys.version_info < minimal_required_python_version:
