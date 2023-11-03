@@ -129,7 +129,6 @@ VALID_LABELS = {
     "feature",
     "has_issue",
     "has_pr",
-    "merge_commit",
     "module",
     "needs_ci",
     "needs_info",
@@ -381,18 +380,6 @@ last_commit: commits(last: 1) {
     }
   }
 }
-commits(last: 50) {
-  nodes {
-    commit {
-      oid
-      parents(last: 2) {
-        nodes {
-          id
-        }
-      }
-    }
-  }
-}
 mergeable
 reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, DISMISSED]) {
   nodes {
@@ -453,7 +440,6 @@ class PR(Issue):
     last_committed_at: datetime.datetime
     ci: CI
     from_repo: str
-    merge_commits: list[str]
     has_issue: bool
     created_at: datetime.datetime
     pushed_at: t.Optional[datetime.datetime]
@@ -1255,7 +1241,6 @@ def needs_revision(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if (
         not isinstance(obj, PR)
-        # or "merge_commit" in actions.to_label
         or "needs_rebase" in actions.to_label
         or (datetime.datetime.now(datetime.timezone.utc) - obj.created_at).seconds
         < 5 * 60
@@ -1360,27 +1345,6 @@ def cancel_ci(build_id: int) -> None:
         data=json.dumps({"status": "Cancelling"}),
     )
     logging.info("Cancelled with status_code: %d", resp.status_code)
-
-
-def merge_commits(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, PR):
-        return
-    if obj.merge_commits:
-        if obj.ci.is_running():
-            actions.cancel_ci = True
-        if not last_boilerplate(obj, "merge_commit_notify"):
-            actions.comments.append(
-                template_comment(
-                    "merge_commit_notify",
-                    {
-                        "author": obj.author,
-                        "commits": "\n".join((f"* {c}" for c in obj.merge_commits)),
-                    },
-                )
-            )
-        actions.to_label.append("merge_commit")
-    else:
-        actions.to_unlabel.append("merge_commit")
 
 
 def linked_objs(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
@@ -1502,7 +1466,6 @@ bot_funcs = [
     waiting_on_contributor,
     needs_info,
     match_version,
-    # merge_commits,  # order matters, must be before needs_ci
     ci_comments,  # order matters, must be before needs_ci
     needs_revision,
     needs_rebase,  # order matters, must be before needs_ci
@@ -1911,11 +1874,6 @@ def fetch_object(
         kwargs["from_repo"] = (
             f"{repo['owner']['login']}/{repo['name']}" if repo else "ghost/ghost"
         )
-        kwargs["merge_commits"] = [
-            n["commit"]["oid"]
-            for n in o["commits"]["nodes"]
-            if len(n["commit"]["parents"]["nodes"]) > 1
-        ]
         kwargs["has_issue"] = len(o["closingIssuesReferences"]["nodes"]) > 0
         kwargs["pushed_at"] = None
 
