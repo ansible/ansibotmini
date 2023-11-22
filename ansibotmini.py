@@ -1826,6 +1826,7 @@ def fetch_object(
         kwargs["created_at"] = datetime.datetime.fromisoformat(o["createdAt"])
         kwargs["branch"] = o["baseRef"]["name"]
         kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
+        logging.info("mergeable: '%s'", o["mergeable"])
         kwargs["mergeable"] = o["mergeable"].lower() == "mergeable"
         reviews = {}
         for review in reversed(o["reviews"]["nodes"]):
