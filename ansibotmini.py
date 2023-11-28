@@ -1037,9 +1037,13 @@ def is_in_collection(
 
     for component in processed_components:
         fqcn = component.split(".")
-        if len(fqcn) != 3:
-            continue
-        fqcn = ".".join(fqcn[:2])
+        match len(fqcn):
+            case 2:
+                fqcn = component
+            case 3:
+                fqcn = ".".join(fqcn[:2])
+            case _:
+                continue
         if fqcn in ctx.collections_list and fqcn in ctx.collections_to_redirect:
             entries[component].append(fqcn)
 

@@ -59,6 +59,16 @@ def ctx():
         ),
         ("role", "", []),
         ("host", "", []),
+        (
+            "ansible.posix",
+            "ansible.posix",
+            ["ansible.posix"],
+        ),
+        (
+            "not.a.fq.cn",
+            "not.a.fq.cn",
+            [],
+        ),
     ],
 )
 def test_collection_redirect(ctx, in_component, out_component, expected):
