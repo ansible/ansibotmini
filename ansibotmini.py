@@ -411,6 +411,10 @@ closingIssuesReferences(last: 1) {
 )
 
 
+class TriageNextTime(Exception):
+    """Skip triaging an issue/PR due to the bot not receiving complete data to continue. Try next time."""
+
+
 @dataclass
 class Response:
     status_code: int
@@ -440,7 +444,7 @@ class Issue:
 class PR(Issue):
     branch: str
     files: list[str]
-    mergeable: bool
+    mergeable: str
     changes_requested: bool
     last_reviewed_at: datetime.datetime
     last_committed_at: datetime.datetime
@@ -1314,10 +1318,16 @@ def is_module(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 def needs_rebase(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
-    if not obj.mergeable:
-        actions.to_label.append("needs_rebase")
-    else:
-        actions.to_unlabel.append("needs_rebase")
+    # https://docs.github.com/en/graphql/reference/enums#mergeablestate
+    match obj.mergeable:
+        case "mergeable":
+            actions.to_unlabel.append("needs_rebase")
+        case "conflicting":
+            actions.to_label.append("needs_rebase")
+        case "unknown":
+            raise TriageNextTime("Skipping due to the mergeable state being unknown")
+        case _:
+            raise AssertionError(f"Unexpected mergeable value: '{obj.mergeable}'")
 
 
 def stale_review(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
@@ -1830,8 +1840,7 @@ def fetch_object(
         kwargs["created_at"] = datetime.datetime.fromisoformat(o["createdAt"])
         kwargs["branch"] = o["baseRef"]["name"]
         kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
-        logging.info("mergeable: '%s'", o["mergeable"])
-        kwargs["mergeable"] = o["mergeable"].lower() == "mergeable"
+        kwargs["mergeable"] = o["mergeable"].lower()
         reviews = {}
         for review in reversed(o["reviews"]["nodes"]):
             state = review["state"].lower()
@@ -1966,7 +1975,11 @@ def daemon(
         data, n = {}, 0
         try:
             for n, obj in enumerate(fetch_objects(force_all_from_cache), 1):
-                triage(obj, ctx, dry_run, ask, ignore_bot_skip)
+                try:
+                    triage(obj, ctx, dry_run, ask, ignore_bot_skip)
+                except TriageNextTime as e:
+                    logging.warning(e)
+                    continue
                 data[str(obj.number)] = obj
         finally:
             if n:
