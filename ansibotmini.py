@@ -1664,6 +1664,10 @@ def triage(
     actions = Actions()
     for f in bot_funcs:
         f(obj, actions, ctx)
+        if not dry_run and actions.close:
+            # short-circuit the rest of the triage to avoid posting
+            # information that would be irrelevant after closing
+            break
 
     # remove bot_closed for re-opened issues/prs
     if "bot_closed" not in actions.to_label:
