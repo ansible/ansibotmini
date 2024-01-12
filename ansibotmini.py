@@ -957,7 +957,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                         existing_components.remove(path)
                 case _:
                     logging.info(
-                        f"Incorrect operation for the component command: {op}"
+                        "Incorrect operation for the component command: %s", op
                     )
 
         post_comments_banner = True
