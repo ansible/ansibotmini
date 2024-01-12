@@ -941,13 +941,10 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 processed_components, ctx.devel_file_list
             )
 
-        command_components = []
         for command in ctx.commands_found.get("component", []):
             op, path = command.arg[0], command.arg[1:]
-            command_components.append(path)
-            if path not in ctx.devel_file_list and not is_in_collection(
-                [path], [], ctx
-            ):
+            if path not in ctx.devel_file_list:
+                processed_components.append(path)
                 continue
             match op:
                 case "=":
@@ -959,19 +956,16 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     if path in existing_components:
                         existing_components.remove(path)
                 case _:
-                    raise ValueError(
+                    logging.info(
                         f"Incorrect operation for the component command: {op}"
                     )
 
         post_comments_banner = True
-
         if (
             not existing_components
             and "!needs_collection_redirect" not in ctx.commands_found
         ):
-            if entries := is_in_collection(
-                command_components, processed_components, ctx
-            ):
+            if entries := is_in_collection(processed_components, ctx):
                 assembled_entries = []
                 for component, fqcns in entries.items():
                     for fqcn in fqcns:
@@ -1034,12 +1028,10 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     )
 
 
-def is_in_collection(
-    command_components: list[str], processed_components: list[str], ctx: TriageContext
-) -> dict[str, list[str]]:
-    entries = collections.defaultdict(list)
+def is_in_collection(components: list[str], ctx: TriageContext) -> dict[str, set[str]]:
+    entries = collections.defaultdict(set)
 
-    for component in processed_components:
+    for component in components:
         fqcn = component.split(".")
         match len(fqcn):
             case 2:
@@ -1049,9 +1041,9 @@ def is_in_collection(
             case _:
                 continue
         if fqcn in ctx.collections_list and fqcn in ctx.collections_to_redirect:
-            entries[component].append(fqcn)
+            entries[component].add(fqcn)
 
-    for component in itertools.chain(processed_components, command_components):
+    for component in components:
         if "/" not in component:
             continue
         flatten = re.sub(
@@ -1061,12 +1053,12 @@ def is_in_collection(
         )
         for fqcn in ctx.collections_file_map.get(flatten, []):
             if fqcn in ctx.collections_to_redirect:
-                entries[flatten].append(fqcn)
+                entries[flatten].add(fqcn)
         if entries:
             break
     else:
         for component, plugin_type, ext in itertools.product(
-            (c for c in processed_components if "/" not in c),
+            (c for c in components if "/" not in c),
             (itertools.chain(ANSIBLE_PLUGINS, ["modules"])),
             ("py", "ps1"),
         ):
@@ -1078,10 +1070,10 @@ def is_in_collection(
                             f"lib/ansible/modules/{component}.{ext}"
                             in ctx.v29_flatten_modules
                         ):
-                            entries[candidate].append(fqcn)
+                            entries[candidate].add(fqcn)
                     else:
                         if f"lib/ansible/{candidate}" in ctx.v29_file_list:
-                            entries[candidate].append(fqcn)
+                            entries[candidate].add(fqcn)
     return entries
 
 
