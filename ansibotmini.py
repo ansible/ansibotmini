@@ -1839,12 +1839,8 @@ def fetch_object(
         kwargs["mergeable"] = o["mergeable"].lower()
         reviews = {}
         for review in reversed(o["reviews"]["nodes"]):
-            state = review["state"].lower()
-            if state not in ("changes_requested", "dismissed"):
-                continue
-            author = review["author"]["login"]
-            if author not in reviews:
-                reviews[author] = state
+            if (author := review["author"]["login"]) not in reviews:
+                reviews[author] = review["state"].lower()
         kwargs["changes_requested"] = "changes_requested" in reviews.values()
         kwargs["last_reviewed_at"] = max(
             (r["updatedAt"] for r in o["reviews"]["nodes"]), default=None
