@@ -394,6 +394,7 @@ reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, DISMISSED]) {
     }
     state
     updatedAt
+    isMinimized
   }
 }
 headRepository {
@@ -1839,6 +1840,8 @@ def fetch_object(
         kwargs["mergeable"] = o["mergeable"].lower()
         reviews = {}
         for review in reversed(o["reviews"]["nodes"]):
+            if review["isMinimized"]:
+                continue
             if (author := review["author"]["login"]) not in reviews:
                 reviews[author] = review["state"].lower()
         kwargs["changes_requested"] = "changes_requested" in reviews.values()
