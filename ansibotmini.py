@@ -519,7 +519,7 @@ def http_request(
     data: str = "",
     headers: t.Optional[t.MutableMapping[str, str]] = None,
     method: str = "GET",
-    retries: int = 2,
+    retries: int = 3,
 ) -> Response:
     global request_counter
     if headers is None:
@@ -555,17 +555,21 @@ def http_request(
                 )
         except urllib.error.HTTPError as e:
             logging.info(e)
-            if e.status >= 500 and i < retries - 1:
-                logging.info(
-                    "Waiting for %d seconds and retrying the request...", wait_seconds
+            if e.status >= 500:
+                if i < retries - 1:
+                    logging.info(
+                        "Waiting for %d seconds and retrying the request...",
+                        wait_seconds,
+                    )
+                    time.sleep(wait_seconds)
+                else:
+                    raise
+            else:
+                return Response(
+                    status_code=e.status,
+                    reason=e.reason,
+                    raw_data=b"",
                 )
-                time.sleep(wait_seconds)
-                continue
-            return Response(
-                status_code=e.status,
-                reason=e.reason,
-                raw_data=b"",
-            )
         except (TimeoutError, urllib.error.URLError) as e:
             logging.info(e)
             if i < retries - 1:
@@ -573,8 +577,8 @@ def http_request(
                     "Waiting for %d seconds and retrying the request...", wait_seconds
                 )
                 time.sleep(wait_seconds)
-                continue
-            raise
+            else:
+                raise
 
 
 def send_query(data: dict[str, t.Any]) -> Response:
