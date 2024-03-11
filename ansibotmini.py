@@ -1582,7 +1582,8 @@ def get_triage_context() -> TriageContext:
     try:
         collections_list = http_request(COLLECTIONS_LIST_ENDPOINT).json()
         collections_file_map = http_request(COLLECTIONS_FILEMAP_ENDPOINT).json()
-    except Exception:
+    except urllib.error.HTTPError as e:
+        logging.error("%s: %d %s", e.url, e.status, e.reason)
         collections_list = None
         collections_file_map = None
 
