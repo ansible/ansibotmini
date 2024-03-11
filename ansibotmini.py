@@ -1034,6 +1034,9 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def is_in_collection(components: list[str], ctx: TriageContext) -> dict[str, set[str]]:
+    if ctx.collections_list is None:
+        return {}
+
     entries = collections.defaultdict(set)
 
     for component in components:
@@ -1432,7 +1435,7 @@ def is_new_issue(obj: GH_OBJ) -> bool:
 
 
 def test_support_plugin(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, PR):
+    if not isinstance(obj, PR) or ctx.collections_file_map is None:
         return
 
     data = []
@@ -1576,9 +1579,16 @@ def get_triage_context() -> TriageContext:
             if (possibly_flatten := flatten_module_path(f)) not in v29_file_list:
                 v29_flatten_modules.append(possibly_flatten)
 
+    try:
+        collections_list = http_request(COLLECTIONS_LIST_ENDPOINT).json()
+        collections_file_map = http_request(COLLECTIONS_FILEMAP_ENDPOINT).json()
+    except Exception:
+        collections_list = None
+        collections_file_map = None
+
     return TriageContext(
-        collections_list=http_request(COLLECTIONS_LIST_ENDPOINT).json(),
-        collections_file_map=http_request(COLLECTIONS_FILEMAP_ENDPOINT).json(),
+        collections_list=collections_list,
+        collections_file_map=collections_file_map,
         committers=get_committers(),
         devel_file_list=devel_file_list,
         v29_file_list=v29_file_list,
