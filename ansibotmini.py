@@ -416,7 +416,7 @@ class TriageNextTime(Exception):
     """Skip triaging an issue/PR due to the bot not receiving complete data to continue. Try next time."""
 
 
-@dataclass
+@dataclass(slots=True)
 class Response:
     status_code: int
     reason: str
@@ -426,7 +426,7 @@ class Response:
         return json.loads((self.raw_data or b"{}").decode())
 
 
-@dataclass
+@dataclass(slots=True)
 class Issue:
     id: str
     author: str
@@ -441,7 +441,7 @@ class Issue:
     last_triaged_at: t.Optional[datetime.datetime]
 
 
-@dataclass
+@dataclass(slots=True)
 class PR(Issue):
     branch: str
     files: list[str]
@@ -456,7 +456,7 @@ class PR(Issue):
     pushed_at: t.Optional[datetime.datetime]
 
 
-@dataclass
+@dataclass(slots=True)
 class CI:
     build_id: t.Optional[int] = None
     completed: bool = False
@@ -469,13 +469,13 @@ class CI:
         return self.build_id is not None and not self.completed
 
 
-@dataclass
+@dataclass(slots=True)
 class Command:
     updated_at: datetime.datetime
     arg: t.Optional[str] = None
 
 
-@dataclass
+@dataclass(slots=True)
 class Actions:
     to_label: list[str] = dataclasses.field(default_factory=list)
     to_unlabel: list[str] = dataclasses.field(default_factory=list)
@@ -494,7 +494,7 @@ class Actions:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class TriageContext:
     collections_list: dict[str, t.Any]
     collections_file_map: dict[str, t.Any]
