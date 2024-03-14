@@ -511,8 +511,6 @@ class TriageContext:
 GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
 GH_OBJ_T = t.TypeVar("GH_OBJ_T", t.Type[Issue], t.Type[PR])
 
-request_counter = 0
-
 
 def http_request(
     url: str,
@@ -521,17 +519,16 @@ def http_request(
     method: str = "GET",
     retries: int = 3,
 ) -> Response:
-    global request_counter
     if headers is None:
         headers = {}
 
     wait_seconds = 10
     for i in range(retries):
         try:
-            request_counter += 1
+            http_request.counter = getattr(http_request, "counter", 0) + 1
             logging.info(
                 "http request no. %d: %s %s",
-                request_counter,
+                http_request.counter,
                 method,
                 url,
             )
@@ -1968,13 +1965,11 @@ def daemon(
     ignore_bot_skip: bool = False,
     force_all_from_cache: bool = False,
 ) -> None:
-    global request_counter
-
     ctx = get_triage_context()
     triage_ctx_created_at = datetime.datetime.now(datetime.timezone.utc)
     while True:
         logging.info("Starting triage")
-        request_counter = 0
+        http_request.counter = 0
         start = time.time()
 
         # refresh triage context
@@ -2001,7 +1996,7 @@ def daemon(
                     logging.info("Done generating %s", BYFILE_PAGE_FILENAME)
 
             logging.info(
-                f"Took {time.time() - start:.2f} seconds and {request_counter} HTTP requests to check for new/stale "
+                f"Took {time.time() - start:.2f} seconds and {http_request.counter} HTTP requests to check for new/stale "
                 f"issues/PRs{f' and triage {n} of them.' if n else '.'}",
             )
         logging.info("Sleeping for %d minutes", SLEEP_SECONDS // 60)
