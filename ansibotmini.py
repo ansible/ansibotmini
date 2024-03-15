@@ -1980,16 +1980,14 @@ def daemon(
                     triage(obj, ctx, dry_run, ask, ignore_bot_skip)
                 except TriageNextTime as e:
                     logging.warning(e)
-                    continue
-                data[str(obj.number)] = obj
+                else:
+                    data[str(obj.number)] = obj
         finally:
             if n:
                 with shelve.open(CACHE_FILENAME) as cache:
                     cache.update(data)
                 if generate_byfile:
-                    logging.info("Generating %s", BYFILE_PAGE_FILENAME)
                     generate_byfile_page()
-                    logging.info("Done generating %s", BYFILE_PAGE_FILENAME)
 
             logging.info(
                 f"Took {time.time() - start:.2f} seconds and {http_request.counter} HTTP requests to check for new/stale "
@@ -2113,6 +2111,7 @@ def main() -> None:
 
 
 def generate_byfile_page():
+    logging.info("Generating %s", BYFILE_PAGE_FILENAME)
     with shelve.open(CACHE_FILENAME) as objs:
         component_to_numbers = collections.defaultdict(list)
         for obj in objs.values():
@@ -2138,6 +2137,7 @@ def generate_byfile_page():
 
     with open(BYFILE_PAGE_FILENAME, "w") as f:
         f.write("".join(data))
+    logging.info("%s generated", BYFILE_PAGE_FILENAME)
 
 
 if __name__ == "__main__":
