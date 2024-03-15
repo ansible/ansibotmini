@@ -20,6 +20,7 @@ import logging
 import logging.handlers
 import os.path
 import pprint
+import queue
 import re
 import shelve
 import string
@@ -1782,12 +1783,12 @@ def ratelimit_to_str(rate_limit: dict[str, t.Any]) -> str:
     return f"cost: {rate_limit['cost']}, {rate_limit['remaining']}/{rate_limit['limit']} until {rate_limit['resetAt']}"
 
 
-def get_gh_objects(obj_name: str) -> list[tuple[str, datetime.datetime]]:
-    logging.info("Getting open %s", obj_name)
-    query = QUERY_ISSUE_NUMBERS if obj_name == "issues" else QUERY_PR_NUMBERS
-    rv = []
+def get_gh_objects(
+    obj_name: str, query: str
+) -> t.Generator[tuple[str, datetime.datetime], None, None]:
     variables = {}
     while True:
+        logging.info("Getting open %s", obj_name)
         resp = send_query({"query": query, "variables": variables})
         data = resp.json()["data"]
         logging.info(ratelimit_to_str(data["rateLimit"]))
@@ -1802,11 +1803,9 @@ def get_gh_objects(obj_name: str) -> list[tuple[str, datetime.datetime]]:
                 last_commit = node["commits"]["nodes"][0]["commit"]
                 if ci_results := last_commit["checkSuites"]["nodes"]:
                     updated_ats.append(ci_results[0]["updatedAt"])
-            rv.append(
-                (
-                    str(node["number"]),
-                    max(map(datetime.datetime.fromisoformat, updated_ats)),
-                )
+            yield (
+                str(node["number"]),
+                max(map(datetime.datetime.fromisoformat, updated_ats)),
             )
 
         if objs["pageInfo"]["hasNextPage"]:
@@ -1814,17 +1813,27 @@ def get_gh_objects(obj_name: str) -> list[tuple[str, datetime.datetime]]:
         else:
             break
 
-    return rv
+
+def get_issues(q: queue.SimpleQueue):
+    for issue in get_gh_objects("issues", QUERY_ISSUE_NUMBERS):
+        q.put((issue, fetch_issue))
+    q.put(...)
+
+
+def get_prs(q: queue.SimpleQueue):
+    for pr in get_gh_objects("pullRequests", QUERY_PR_NUMBERS):
+        q.put((pr, fetch_pr))
+    q.put(...)
 
 
 def fetch_object(
     number: str,
     obj: GH_OBJ_T,
     object_name: str,
+    query: str,
     updated_at: t.Optional[datetime.datetime] = None,
 ) -> GH_OBJ:
     logging.info("Getting %s #%s", object_name, number)
-    query = QUERY_SINGLE_ISSUE if object_name == "issue" else QUERY_SINGLE_PR
     resp = send_query({"query": query, "variables": {"number": int(number)}})
     data = resp.json()["data"]
     logging.info(ratelimit_to_str(data["rateLimit"]))
@@ -1907,11 +1916,19 @@ def fetch_object(
     return obj(**kwargs)
 
 
+def fetch_issue(number: str, updated_at: datetime.datetime | None = None) -> GH_OBJ:
+    return fetch_object(number, Issue, "issue", QUERY_SINGLE_ISSUE, updated_at)
+
+
+def fetch_pr(number: str, updated_at: datetime.datetime | None = None) -> GH_OBJ:
+    return fetch_object(number, PR, "pullRequest", QUERY_SINGLE_PR, updated_at)
+
+
 def fetch_object_by_number(number: str) -> GH_OBJ:
     try:
-        obj = fetch_object(number, Issue, "issue")
+        obj = fetch_issue(number)
     except ValueError:
-        obj = fetch_object(number, PR, "pullRequest")
+        obj = fetch_pr(number)
         obj.pushed_at = obj.last_committed_at
 
     return obj
@@ -1927,35 +1944,33 @@ def fetch_objects(
         for obj in data.values():
             yield obj
 
+    q = queue.SimpleQueue()
+    workers = 2
     with shelve.open(CACHE_FILENAME) as cache:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {
-                executor.submit(get_gh_objects, "issues"): "issues",
-                executor.submit(get_gh_objects, "pullRequests"): "prs",
-            }
-            number_map = collections.defaultdict(list)
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="WorkerThread"
+        ) as executor:
+            executor.submit(get_issues, q)
+            executor.submit(get_prs, q)
+            done = 0
             open_numbers = []
-            for future in concurrent.futures.as_completed(futures):
-                issue_type = futures[future]
-                number_map[issue_type] = [
-                    (number, updated_at)
-                    for number, updated_at in future.result()
-                    if number not in cache
-                    or cache[str(number)].last_triaged_at is None
-                    or cache[str(number)].last_triaged_at < updated_at
-                    or days_since(cache[str(number)].last_triaged_at)
-                    >= STALE_ISSUE_DAYS
-                ]
-                open_numbers.extend([str(r[0]) for r in future.result()])
-            for number in cache.keys():
-                if number in cache and number not in open_numbers:
-                    del cache[number]
+            while done < workers:
+                v = q.get()
+                if v is ...:
+                    done += 1
+                else:
+                    (number, updated_at), fetch_func = v
+                    open_numbers.append(number)
+                    if (
+                        (o := cache.get(number, None)) is None
+                        or o.last_triaged_at is None
+                        or o.last_triaged_at < updated_at
+                        or days_since(o.last_triaged_at) >= STALE_ISSUE_DAYS
+                    ):
+                        yield fetch_func(number, updated_at)
 
-    for number, updated_at in number_map["issues"]:
-        yield fetch_object(number, Issue, "issue", updated_at)
-
-    for number, updated_at in number_map["prs"]:
-        yield fetch_object(number, PR, "pullRequest", updated_at)
+            for number in cache.keys() - open_numbers:
+                cache.pop(number)
 
 
 def daemon(
@@ -1967,12 +1982,12 @@ def daemon(
 ) -> None:
     ctx = None
     while True:
-        if ctx is None or days_since(ctx.updated_at) >= 2:
-            ctx = get_triage_context()
-
         logging.info("Starting triage")
         http_request.counter = 0
         start = time.time()
+        if ctx is None or days_since(ctx.updated_at) >= 2:
+            ctx = get_triage_context()
+
         data, n = {}, 0
         try:
             for n, obj in enumerate(fetch_objects(force_all_from_cache), 1):
