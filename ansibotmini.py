@@ -505,6 +505,7 @@ class TriageContext:
     collections_to_redirect: list[str]
     labels_to_ids_map: dict[str, str]
     supported_bugfix_versions: list[str]
+    updated_at: datetime.datetime
     commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
 
 
@@ -1594,6 +1595,7 @@ def get_triage_context() -> TriageContext:
         .splitlines(),
         supported_bugfix_versions=get_supported_bugfix_versions(),
         labels_to_ids_map={n: get_label_id(n) for n in VALID_LABELS},
+        updated_at=datetime.datetime.now(datetime.timezone.utc),
     )
 
 
@@ -1963,18 +1965,14 @@ def daemon(
     ignore_bot_skip: bool = False,
     force_all_from_cache: bool = False,
 ) -> None:
-    ctx = get_triage_context()
-    triage_ctx_created_at = datetime.datetime.now(datetime.timezone.utc)
+    ctx = None
     while True:
+        if ctx is None or days_since(ctx.updated_at) >= 2:
+            ctx = get_triage_context()
+
         logging.info("Starting triage")
         http_request.counter = 0
         start = time.time()
-
-        # refresh triage context
-        if days_since(triage_ctx_created_at) > 1:
-            ctx = get_triage_context()
-            triage_ctx_created_at = datetime.datetime.now(datetime.timezone.utc)
-
         data, n = {}, 0
         try:
             for n, obj in enumerate(fetch_objects(force_all_from_cache), 1):
