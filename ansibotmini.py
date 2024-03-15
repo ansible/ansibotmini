@@ -19,10 +19,10 @@ import json
 import logging
 import logging.handlers
 import os.path
+import pickle
 import pprint
 import queue
 import re
-import shelve
 import string
 import subprocess
 import sys
@@ -32,7 +32,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import dataclass
 
 import packaging.version
 
@@ -90,7 +89,7 @@ WAITING_ON_CONTRIBUTOR_CLOSE_DAYS = 365
 SLEEP_SECONDS = 300
 
 CONFIG_FILENAME = os.path.expanduser("~/.ansibotmini.cfg")
-CACHE_FILENAME = os.path.expanduser("~/.ansibotmini_cache")
+CACHE_FILENAME = os.path.expanduser("~/.ansibotmini_cache.pickle")
 BYFILE_PAGE_FILENAME = os.path.expanduser("~/byfile.html")
 LOG_FILENAME = os.path.expanduser("~/ansibotmini.log")
 
@@ -417,7 +416,7 @@ class TriageNextTime(Exception):
     """Skip triaging an issue/PR due to the bot not receiving complete data to continue. Try next time."""
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class Response:
     status_code: int
     reason: str
@@ -427,7 +426,7 @@ class Response:
         return json.loads(self.raw_data or b"{}")
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class Issue:
     id: str
     author: str
@@ -442,7 +441,7 @@ class Issue:
     last_triaged_at: t.Optional[datetime.datetime]
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class PR(Issue):
     branch: str
     files: list[str]
@@ -457,7 +456,7 @@ class PR(Issue):
     pushed_at: t.Optional[datetime.datetime]
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class CI:
     build_id: t.Optional[int] = None
     completed: bool = False
@@ -470,13 +469,13 @@ class CI:
         return self.build_id is not None and not self.completed
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class Command:
     updated_at: datetime.datetime
     arg: t.Optional[str] = None
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class Actions:
     to_label: list[str] = dataclasses.field(default_factory=list)
     to_unlabel: list[str] = dataclasses.field(default_factory=list)
@@ -495,7 +494,7 @@ class Actions:
         )
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class TriageContext:
     collections_list: dict[str, t.Any]
     collections_file_map: dict[str, t.Any]
@@ -508,6 +507,7 @@ class TriageContext:
     supported_bugfix_versions: list[str]
     updated_at: datetime.datetime
     commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
+    cache: dict[int, GH_OBJ] = dataclasses.field(default_factory=dict)
 
 
 GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
@@ -1611,8 +1611,7 @@ def triage(
     logging.info(obj.url)
 
     if isinstance(obj, PR):
-        with shelve.open(CACHE_FILENAME) as cache:
-            cached_obj = cache.get(str(obj.number))
+        cached_obj = ctx.cache.get(obj.number)
         if cached_obj is None:
             obj.pushed_at = obj.last_committed_at
         elif obj.last_committed_at != cached_obj.last_committed_at:
@@ -1785,7 +1784,7 @@ def ratelimit_to_str(rate_limit: dict[str, t.Any]) -> str:
 
 def get_gh_objects(
     obj_name: str, query: str
-) -> t.Generator[tuple[str, datetime.datetime], None, None]:
+) -> t.Generator[tuple[int, datetime.datetime], None, None]:
     variables = {}
     while True:
         logging.info("Getting open %s", obj_name)
@@ -1804,7 +1803,7 @@ def get_gh_objects(
                 if ci_results := last_commit["checkSuites"]["nodes"]:
                     updated_ats.append(ci_results[0]["updatedAt"])
             yield (
-                str(node["number"]),
+                node["number"],
                 max(map(datetime.datetime.fromisoformat, updated_ats)),
             )
 
@@ -1827,14 +1826,14 @@ def get_prs(q: queue.SimpleQueue):
 
 
 def fetch_object(
-    number: str,
+    number: int,
     obj: GH_OBJ_T,
     object_name: str,
     query: str,
     updated_at: t.Optional[datetime.datetime] = None,
 ) -> GH_OBJ:
-    logging.info("Getting %s #%s", object_name, number)
-    resp = send_query({"query": query, "variables": {"number": int(number)}})
+    logging.info("Getting %s #%d", object_name, number)
+    resp = send_query({"query": query, "variables": {"number": number}})
     data = resp.json()["data"]
     logging.info(ratelimit_to_str(data["rateLimit"]))
     o = data["repository"][object_name]
@@ -1916,15 +1915,15 @@ def fetch_object(
     return obj(**kwargs)
 
 
-def fetch_issue(number: str, updated_at: datetime.datetime | None = None) -> GH_OBJ:
+def fetch_issue(number: int, updated_at: datetime.datetime | None = None) -> GH_OBJ:
     return fetch_object(number, Issue, "issue", QUERY_SINGLE_ISSUE, updated_at)
 
 
-def fetch_pr(number: str, updated_at: datetime.datetime | None = None) -> GH_OBJ:
+def fetch_pr(number: int, updated_at: datetime.datetime | None = None) -> GH_OBJ:
     return fetch_object(number, PR, "pullRequest", QUERY_SINGLE_PR, updated_at)
 
 
-def fetch_object_by_number(number: str) -> GH_OBJ:
+def fetch_object_by_number(number: int) -> GH_OBJ:
     try:
         obj = fetch_issue(number)
     except ValueError:
@@ -1935,42 +1934,41 @@ def fetch_object_by_number(number: str) -> GH_OBJ:
 
 
 def fetch_objects(
+    cache: dict[int, GH_OBJ],
     force_all_from_cache: bool = False,
 ) -> t.Generator[GH_OBJ, None, None]:
     if force_all_from_cache:
-        with shelve.open(CACHE_FILENAME) as cache:
-            if not (data := dict(cache)):
-                raise RuntimeError("Empty cache")
-        for obj in data.values():
+        if not cache:
+            raise RuntimeError("Empty cache")
+        for obj in cache.values():
             yield obj
 
     q = queue.SimpleQueue()
     workers = 2
-    with shelve.open(CACHE_FILENAME) as cache:
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=workers, thread_name_prefix="WorkerThread"
-        ) as executor:
-            executor.submit(get_issues, q)
-            executor.submit(get_prs, q)
-            done = 0
-            open_numbers = []
-            while done < workers:
-                v = q.get()
-                if v is ...:
-                    done += 1
-                else:
-                    (number, updated_at), fetch_func = v
-                    open_numbers.append(number)
-                    if (
-                        (o := cache.get(number, None)) is None
-                        or o.last_triaged_at is None
-                        or o.last_triaged_at < updated_at
-                        or days_since(o.last_triaged_at) >= STALE_ISSUE_DAYS
-                    ):
-                        yield fetch_func(number, updated_at)
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=workers, thread_name_prefix="WorkerThread"
+    ) as executor:
+        executor.submit(get_issues, q)
+        executor.submit(get_prs, q)
+        done = 0
+        open_numbers = []
+        while done < workers:
+            v = q.get()
+            if v is ...:
+                done += 1
+            else:
+                (number, updated_at), fetch_func = v
+                open_numbers.append(number)
+                if (
+                    (o := cache.get(number, None)) is None
+                    or o.last_triaged_at is None
+                    or o.last_triaged_at < updated_at
+                    or days_since(o.last_triaged_at) >= STALE_ISSUE_DAYS
+                ):
+                    yield fetch_func(number, updated_at)
 
-            for number in cache.keys() - open_numbers:
-                cache.pop(number)
+        for number in cache.keys() - open_numbers:
+            cache.pop(number)
 
 
 def daemon(
@@ -1980,6 +1978,13 @@ def daemon(
     ignore_bot_skip: bool = False,
     force_all_from_cache: bool = False,
 ) -> None:
+    try:
+        with open(CACHE_FILENAME, "rb") as f:
+            cache = pickle.load(f)
+    except (OSError, EOFError) as e:
+        cache = {}
+        logging.info("Could not use cache: '%s'", e)
+
     ctx = None
     while True:
         logging.info("Starting triage")
@@ -1987,22 +1992,24 @@ def daemon(
         start = time.time()
         if ctx is None or days_since(ctx.updated_at) >= 2:
             ctx = get_triage_context()
+            ctx.cache = cache
 
-        data, n = {}, 0
+        n = 0
         try:
-            for n, obj in enumerate(fetch_objects(force_all_from_cache), 1):
+            for n, obj in enumerate(fetch_objects(ctx.cache, force_all_from_cache), 1):
                 try:
                     triage(obj, ctx, dry_run, ask, ignore_bot_skip)
                 except TriageNextTime as e:
                     logging.warning(e)
                 else:
-                    data[str(obj.number)] = obj
+                    # FIXME cache only needed data
+                    ctx.cache[obj.number] = obj
         finally:
             if n:
-                with shelve.open(CACHE_FILENAME) as cache:
-                    cache.update(data)
+                with open(CACHE_FILENAME, "wb") as f:
+                    pickle.dump(ctx.cache, f)
                 if generate_byfile:
-                    generate_byfile_page()
+                    generate_byfile_page(ctx.cache)
 
             logging.info(
                 f"Took {time.time() - start:.2f} seconds and {http_request.counter} HTTP requests to check for new/stale "
@@ -2025,7 +2032,9 @@ def main() -> None:
             "based on the Ansible Core Engineering team workflow"
         ),
     )
-    parser.add_argument("--number", help="GitHub issue or pull request number")
+    parser.add_argument(
+        "--number", type=int, help="GitHub issue or pull request number"
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -2125,13 +2134,12 @@ def main() -> None:
             sys.exit(1)
 
 
-def generate_byfile_page():
+def generate_byfile_page(cache: dict[int, GH_OBJ]):
     logging.info("Generating %s", BYFILE_PAGE_FILENAME)
-    with shelve.open(CACHE_FILENAME) as objs:
-        component_to_numbers = collections.defaultdict(list)
-        for obj in objs.values():
-            for component in obj.components:
-                component_to_numbers[component].append(obj)
+    component_to_numbers = collections.defaultdict(list)
+    for obj in cache.values():
+        for component in obj.components:
+            component_to_numbers[component].append(obj)
 
     data = []
     for idx, (component, issues) in enumerate(
