@@ -2049,7 +2049,7 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(
-        format="%(asctime)s %(levelname)s:%(name)s: %(message)s",
+        format="%(asctime)s %(levelname)s:%(name)s:%(threadName)s: %(message)s",
         level=logging.INFO,
         handlers=[
             logging.handlers.RotatingFileHandler(
