@@ -423,7 +423,7 @@ class Response:
     raw_data: bytes
 
     def json(self) -> t.Any:
-        return json.loads((self.raw_data or b"{}").decode())
+        return json.loads(self.raw_data or b"{}")
 
 
 @dataclass(slots=True)
