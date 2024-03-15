@@ -30,6 +30,7 @@ def ctx():
         ],
         supported_bugfix_versions=[],
         labels_to_ids_map={},
+        updated_at=None,
     )
 
 
