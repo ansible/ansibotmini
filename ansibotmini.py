@@ -827,29 +827,27 @@ def match_existing_components(
         "lib/ansible/vars/",
     ]
     paths.extend((f"lib/ansible/plugins/{name}/" for name in ANSIBLE_PLUGINS))
-    files = []
+    files = set()
     for filename in filenames:
         if filename == "core":
             continue
         if matched_filename := COMPONENT_TO_FILENAME.get(filename):
-            files.append(matched_filename)
+            files.add(matched_filename)
             continue
 
-        files.append(filename)
+        files.add(filename)
         if "/" not in filename:
             for path in paths:
-                files.append(f"{path}{filename}.py")
-                files.append(f"{path}{filename}")
+                files.add(f"{path}{filename}.py")
+                files.add(f"{path}{filename}")
 
-    components = [f for f in files if f in existing_files]
-
+    components = files.intersection(existing_files)
     if not components:
         for file in filenames:
-            components.extend(
+            components.update(
                 difflib.get_close_matches(file, existing_files, cutoff=0.85)
             )
-
-    return list(set(components))
+    return list(components)
 
 
 def was_labeled_by_human(obj: GH_OBJ, label_name: str) -> bool:
