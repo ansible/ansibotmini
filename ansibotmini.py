@@ -1576,13 +1576,15 @@ def get_triage_context() -> TriageContext:
             if (possibly_flatten := flatten_module_path(f)) not in v29_file_list:
                 v29_flatten_modules.append(possibly_flatten)
 
+    collections_list = None
+    collections_file_map = None
     try:
         collections_list = http_request(COLLECTIONS_LIST_ENDPOINT).json()
         collections_file_map = http_request(COLLECTIONS_FILEMAP_ENDPOINT).json()
     except urllib.error.HTTPError as e:
         logging.error("%s: %d %s", e.url, e.status, e.reason)
-        collections_list = None
-        collections_file_map = None
+    except (TimeoutError, urllib.error.URLError) as e:
+        logging.error("%s: %s", COLLECTIONS_LIST_ENDPOINT, e)
 
     return TriageContext(
         collections_list=collections_list,
