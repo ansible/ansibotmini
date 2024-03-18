@@ -57,10 +57,10 @@ if sys.version_info < minimal_required_python_version:
 
 BOT_ACCOUNT = "ansibot"
 
-AZP_ARTIFACTS_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s/artifacts?api-version=7.0"
-AZP_TIMELINE_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s/timeline/?api-version=7.0"
+AZP_ARTIFACTS_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds/%d/artifacts?api-version=7.0"
+AZP_TIMELINE_URL_FMT = "https://dev.azure.com/ansible/ansible/_apis/build/builds/%d/timeline/?api-version=7.0"
 AZP_BUILD_URL_FMT = (
-    "https://dev.azure.com/ansible/ansible/_apis/build/builds/%s?api-version=7.0"
+    "https://dev.azure.com/ansible/ansible/_apis/build/builds/%d?api-version=7.0"
 )
 AZP_BUILD_ID_RE = re.compile(
     r"https://dev\.azure\.com/(?P<organization>[^/]+)/(?P<project>[^/]+)/_build/results\?buildId=(?P<buildId>[0-9]+)",
@@ -418,7 +418,7 @@ class TriageNextTime(Exception):
 
 @dataclasses.dataclass(slots=True)
 class Response:
-    status_code: int
+    status_code: int | None
     reason: str
     raw_data: bytes
 
@@ -438,7 +438,7 @@ class Issue:
     labels: dict[str, str]
     updated_at: datetime.datetime
     components: list[str]
-    last_triaged_at: t.Optional[datetime.datetime]
+    last_triaged_at: datetime.datetime | None
 
 
 @dataclasses.dataclass(slots=True)
@@ -453,17 +453,17 @@ class PR(Issue):
     from_repo: str
     has_issue: bool
     created_at: datetime.datetime
-    pushed_at: t.Optional[datetime.datetime]
+    pushed_at: datetime.datetime | None
 
 
 @dataclasses.dataclass(slots=True)
 class CI:
-    build_id: t.Optional[int] = None
+    build_id: int | None = None
     completed: bool = False
     passed: bool = False
     cancelled: bool = False
-    completed_at: t.Optional[datetime.datetime] = None
-    started_at: t.Optional[datetime.datetime] = None
+    completed_at: datetime.datetime | None = None
+    started_at: datetime.datetime | None = None
 
     def is_running(self) -> bool:
         return self.build_id is not None and not self.completed
@@ -472,7 +472,7 @@ class CI:
 @dataclasses.dataclass(slots=True)
 class Command:
     updated_at: datetime.datetime
-    arg: t.Optional[str] = None
+    arg: str | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -482,7 +482,7 @@ class Actions:
     comments: list[str] = dataclasses.field(default_factory=list)
     cancel_ci: bool = False
     close: bool = False
-    close_reason: t.Optional[str] = None
+    close_reason: str | None = None
 
     def __bool__(self):
         return bool(
@@ -494,10 +494,14 @@ class Actions:
         )
 
 
+GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
+GH_OBJ_T = t.TypeVar("GH_OBJ_T", t.Type[Issue], t.Type[PR])
+
+
 @dataclasses.dataclass(slots=True)
-class TriageContext:
-    collections_list: dict[str, t.Any]
-    collections_file_map: dict[str, t.Any]
+class TriageContext(t.Generic[GH_OBJ]):
+    collections_list: dict[str, t.Any] | None
+    collections_file_map: dict[str, t.Any] | None
     committers: list[str]
     devel_file_list: list[str]
     v29_file_list: list[str]
@@ -510,14 +514,10 @@ class TriageContext:
     cache: dict[int, GH_OBJ] = dataclasses.field(default_factory=dict)
 
 
-GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
-GH_OBJ_T = t.TypeVar("GH_OBJ_T", t.Type[Issue], t.Type[PR])
-
-
 def http_request(
     url: str,
     data: str = "",
-    headers: t.Optional[t.MutableMapping[str, str]] = None,
+    headers: t.MutableMapping[str, str] | None = None,
     method: str = "GET",
     retries: int = 3,
 ) -> Response:
@@ -554,7 +554,7 @@ def http_request(
                 )
         except urllib.error.HTTPError as e:
             logging.info(e)
-            if e.status >= 500:
+            if e.status is not None and e.status >= 500:
                 if i < retries - 1:
                     logging.info(
                         "Waiting for %d seconds and retrying the request...",
@@ -785,7 +785,7 @@ def flatten_module_path(c: str) -> str:
     return re.sub(FLATTEN_MODULES_RE, r"\1\3", c)
 
 
-def template_comment(template_name: str, sub_map: t.Optional[t.Mapping] = None) -> str:
+def template_comment(template_name: str, sub_map: dict | None = None) -> str:
     if sub_map is None:
         sub_map = {}
     with open(
@@ -1009,14 +1009,17 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     and last_comment["created_at"] < last_command[0].updated_at
                 )
             ):
-                entries = [
-                    f"* [`{component}`](https://github.com/ansible/ansible/blob/devel/{component})"
-                    for component in existing_components
-                ]
                 actions.comments.append(
                     template_comment(
                         "components_banner",
-                        {"components": "\n".join(entries) if entries else None},
+                        {
+                            "components": "\n".join(
+                                f"* [`{component}`](https://github.com/ansible/ansible/blob/devel/{component})"
+                                for component in existing_components
+                            )
+                            if existing_components
+                            else None
+                        },
                     )
                 )
 
@@ -1031,18 +1034,18 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def is_in_collection(components: list[str], ctx: TriageContext) -> dict[str, set[str]]:
-    if ctx.collections_list is None:
+    if ctx.collections_list is None or ctx.collections_file_map is None:
         return {}
 
     entries = collections.defaultdict(set)
 
     for component in components:
-        fqcn = component.split(".")
-        match len(fqcn):
+        parts = component.split(".")
+        match len(parts):
             case 2:
                 fqcn = component
             case 3:
-                fqcn = ".".join(fqcn[:2])
+                fqcn = ".".join(parts[:2])
             case _:
                 continue
         if fqcn in ctx.collections_list and fqcn in ctx.collections_to_redirect:
@@ -1736,7 +1739,7 @@ def triage(
                     logging.info("%s #%d: closing", obj.__class__.__name__, obj.number)
                     if isinstance(obj, PR):
                         close_pr(obj.id)
-                    elif isinstance(obj, Issue):
+                    else:
                         close_issue(obj.id, actions.close_reason)
             else:
                 logging.info("Skipping taking actions")
@@ -1787,7 +1790,7 @@ def ratelimit_to_str(rate_limit: dict[str, t.Any]) -> str:
 def get_gh_objects(
     obj_name: str, query: str
 ) -> t.Generator[tuple[int, datetime.datetime], None, None]:
-    variables = {}
+    variables: dict[str, t.Any] = {}
     while True:
         logging.info("Getting open %s", obj_name)
         resp = send_query({"query": query, "variables": variables})
@@ -1832,8 +1835,8 @@ def fetch_object(
     obj: GH_OBJ_T,
     object_name: str,
     query: str,
-    updated_at: t.Optional[datetime.datetime] = None,
-) -> GH_OBJ:
+    updated_at: datetime.datetime | None = None,
+) -> Issue | PR:
     logging.info("Getting %s #%d", object_name, number)
     resp = send_query({"query": query, "variables": {"number": number}})
     data = resp.json()["data"]
@@ -1881,7 +1884,9 @@ def fetch_object(
             "nodes"
         ]:
             check_run = check_suite[0]["checkRuns"]["nodes"][0]
-            build_id = AZP_BUILD_ID_RE.search(check_run["detailsUrl"]).group("buildId")
+            build_id = int(
+                AZP_BUILD_ID_RE.search(check_run["detailsUrl"]).group("buildId")
+            )
             started_at = datetime.datetime.fromisoformat(check_run["startedAt"])
             if check_run["name"] == "CI":
                 try:
@@ -1917,15 +1922,15 @@ def fetch_object(
     return obj(**kwargs)
 
 
-def fetch_issue(number: int, updated_at: datetime.datetime | None = None) -> GH_OBJ:
+def fetch_issue(number: int, updated_at: datetime.datetime | None = None) -> Issue:
     return fetch_object(number, Issue, "issue", QUERY_SINGLE_ISSUE, updated_at)
 
 
-def fetch_pr(number: int, updated_at: datetime.datetime | None = None) -> GH_OBJ:
+def fetch_pr(number: int, updated_at: datetime.datetime | None = None) -> PR:
     return fetch_object(number, PR, "pullRequest", QUERY_SINGLE_PR, updated_at)
 
 
-def fetch_object_by_number(number: int) -> GH_OBJ:
+def fetch_object_by_number(number: int) -> Issue | PR:
     try:
         obj = fetch_issue(number)
     except ValueError:
@@ -1945,7 +1950,7 @@ def fetch_objects(
         for obj in cache.values():
             yield obj
 
-    q = queue.SimpleQueue()
+    q: queue.SimpleQueue = queue.SimpleQueue()
     workers = 2
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=workers, thread_name_prefix="WorkerThread"
