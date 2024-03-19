@@ -511,7 +511,30 @@ class TriageContext(t.Generic[GH_OBJ]):
     supported_bugfix_versions: list[str]
     updated_at: datetime.datetime
     commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
-    cache: dict[int, GH_OBJ] = dataclasses.field(default_factory=dict)
+    cache: dict[int, CacheEntry] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass(slots=True)
+class CacheEntry:
+    title: str
+    url: str
+    components: list[str]
+    updated_at: datetime.datetime
+    last_triaged_at: datetime.datetime
+    last_committed_at: datetime.datetime | None
+    pushed_at: datetime.datetime | None
+
+    @classmethod
+    def from_obj(cls, obj: GH_OBJ):
+        return cls(
+            title=obj.title,
+            url=obj.url,
+            components=obj.components,
+            updated_at=obj.updated_at,
+            last_triaged_at=obj.last_triaged_at,
+            last_committed_at=getattr(obj, "last_committed_at", None),
+            pushed_at=getattr(obj, "pushed_at", None),
+        )
 
 
 def http_request(
@@ -1940,16 +1963,7 @@ def fetch_object_by_number(number: int) -> Issue | PR:
     return obj
 
 
-def fetch_objects(
-    cache: dict[int, GH_OBJ],
-    force_all_from_cache: bool = False,
-) -> t.Generator[GH_OBJ, None, None]:
-    if force_all_from_cache:
-        if not cache:
-            raise RuntimeError("Empty cache")
-        for obj in cache.values():
-            yield obj
-
+def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ, None, None]:
     q: queue.SimpleQueue = queue.SimpleQueue()
     workers = 2
     with concurrent.futures.ThreadPoolExecutor(
@@ -1983,7 +1997,6 @@ def daemon(
     generate_byfile: bool = False,
     ask: bool = False,
     ignore_bot_skip: bool = False,
-    force_all_from_cache: bool = False,
 ) -> None:
     try:
         with open(CACHE_FILENAME, "rb") as f:
@@ -2003,14 +2016,13 @@ def daemon(
 
         n = 0
         try:
-            for n, obj in enumerate(fetch_objects(ctx.cache, force_all_from_cache), 1):
+            for n, obj in enumerate(fetch_objects(ctx.cache), 1):
                 try:
                     triage(obj, ctx, dry_run, ask, ignore_bot_skip)
                 except TriageNextTime as e:
                     logging.warning(e)
                 else:
-                    # FIXME cache only needed data
-                    ctx.cache[obj.number] = obj
+                    ctx.cache[obj.number] = CacheEntry.from_obj(obj)
         finally:
             if n:
                 with open(CACHE_FILENAME, "wb") as f:
@@ -2064,14 +2076,6 @@ def main() -> None:
         "--ignore-bot-skip",
         action="store_true",
         help="ignore bot_skip and bot_broken commands",
-    )
-    parser.add_argument(
-        "--force-all-from-cache",
-        action="store_true",
-        help=(
-            "force triaging all issues and pull requests from cache, "
-            "for testing purposes, not applicable with --number"
-        ),
     )
     args = parser.parse_args()
 
@@ -2131,7 +2135,6 @@ def main() -> None:
                 generate_byfile=args.generate_byfile_page,
                 ask=args.ask,
                 ignore_bot_skip=args.ignore_bot_skip,
-                force_all_from_cache=args.force_all_from_cache,
             )
         except KeyboardInterrupt:
             print("Bye")
@@ -2141,12 +2144,12 @@ def main() -> None:
             sys.exit(1)
 
 
-def generate_byfile_page(cache: dict[int, GH_OBJ]):
+def generate_byfile_page(cache: dict[int, CacheEntry]):
     logging.info("Generating %s", BYFILE_PAGE_FILENAME)
     component_to_numbers = collections.defaultdict(list)
-    for obj in cache.values():
-        for component in obj.components:
-            component_to_numbers[component].append(obj)
+    for number, entry in cache.items():
+        for component in entry.components:
+            component_to_numbers[component].append((number, entry))
 
     data = []
     for idx, (component, issues) in enumerate(
@@ -2159,10 +2162,8 @@ def generate_byfile_page(cache: dict[int, GH_OBJ]):
             f'{idx}. <a href="{component_url}">{component_url}</a> {len(issues)} total\n'
             "</div><br />\n"
         )
-        for obj in sorted(issues, key=lambda x: x.number):
-            otype = "pull" if isinstance(obj, PR) else "issues"
-            issue_url = f"https://github.com/ansible/ansible/{otype}/{obj.number}"
-            data.append(f'<a href="{issue_url}">{issue_url}</a>\t{obj.title}<br />\n')
+        for _, entry in sorted(issues, key=lambda x: x[0]):
+            data.append(f'<a href="{entry.url}">{entry.url}</a>\t{entry.title}<br />\n')
         data.append("<br />\n")
 
     with open(BYFILE_PAGE_FILENAME, "w") as f:
