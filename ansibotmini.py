@@ -2156,14 +2156,16 @@ def generate_byfile_page(cache: dict[int, CacheEntry]):
         sorted(component_to_numbers.items(), key=lambda x: len(x[1]), reverse=True),
         start=1,
     ):
-        component_url = f"https://github.com/ansible/ansible/blob/devel/{component}"
         data.append(
-            '<div style="background-color: #cfc; padding: 10px; border: 1px solid green;">\n'
-            f'{idx}. <a href="{component_url}">{component_url}</a> {len(issues)} total\n'
+            f'<div style="background-color: #cfc; padding: 10px; border: 1px solid green;" id="{component}">\n'
+            f'{idx}. <a href="https://github.com/ansible/ansible/blob/devel/{component}">{component}</a> '
+            f'{len(issues)} total <a href="#{component}">&para;</a>\n'
             "</div><br />\n"
         )
-        for _, entry in sorted(issues, key=lambda x: x[0]):
-            data.append(f'<a href="{entry.url}">{entry.url}</a>\t{entry.title}<br />\n')
+        for number, entry in sorted(issues, key=lambda x: x[0]):
+            data.append(
+                f'<a href="{entry.url}">#{number}</a>&emsp;{entry.title}<br />\n'
+            )
         data.append("<br />\n")
 
     with open(BYFILE_PAGE_FILENAME, "w") as f:
