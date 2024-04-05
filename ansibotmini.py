@@ -33,8 +33,6 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-import packaging.version
-
 try:
     import sentry_sdk
 except ImportError:
@@ -1553,6 +1551,43 @@ def is_command_applied(name: str, obj: GH_OBJ, ctx: TriageContext) -> bool:
     return False
 
 
+# https://packaging.python.org/en/latest/specifications/version-specifiers/#version-specifiers-regex
+VERSION_PATTERN = r"""
+    v?
+    (?:
+        (?:(?P<epoch>[0-9]+)!)?                           # epoch
+        (?P<release>[0-9]+(?:\.[0-9]+)*)                  # release segment
+        (?P<pre>                                          # pre-release
+            [-_\.]?
+            (?P<pre_l>(a|b|c|rc|alpha|beta|pre|preview))
+            [-_\.]?
+            (?P<pre_n>[0-9]+)?
+        )?
+        (?P<post>                                         # post release
+            (?:-(?P<post_n1>[0-9]+))
+            |
+            (?:
+                [-_\.]?
+                (?P<post_l>post|rev|r)
+                [-_\.]?
+                (?P<post_n2>[0-9]+)?
+            )
+        )?
+        (?P<dev>                                          # dev release
+            [-_\.]?
+            (?P<dev_l>dev)
+            [-_\.]?
+            (?P<dev_n>[0-9]+)?
+        )?
+    )
+    (?:\+(?P<local>[a-z0-9]+(?:[-_\.][a-z0-9]+)*))?       # local version
+"""
+
+_version_re = re.compile(
+    r"^\s*" + VERSION_PATTERN + r"\s*$", re.VERBOSE | re.IGNORECASE
+)
+
+
 def get_supported_bugfix_versions() -> list[str]:
     version_to_prerelease_map: dict[str, bool] = collections.defaultdict(lambda: True)
     for release in (
@@ -1560,15 +1595,11 @@ def get_supported_bugfix_versions() -> list[str]:
         .json()
         .get("releases", [])
     ):
-        try:
-            v = packaging.version.Version(release)
-        except ValueError:
-            continue
-        version_to_prerelease_map[f"{v.major}.{v.minor}"] &= v.is_prerelease
+        if (m := _version_re.match(release)) is not None:
+            major_minor = ".".join(m.group("release").split(".")[:2])
+            version_to_prerelease_map[major_minor] &= bool(m.group("pre"))
 
-    versions_sorted: list[str] = sorted(
-        version_to_prerelease_map.keys(), key=packaging.version.Version, reverse=True
-    )
+    versions_sorted: list[str] = sorted(version_to_prerelease_map.keys(), reverse=True)
     latest_version_is_prerelease = version_to_prerelease_map[versions_sorted[0]]
 
     # stable, stable-1, potentially prerelease
@@ -1576,9 +1607,9 @@ def get_supported_bugfix_versions() -> list[str]:
         v for v in versions_sorted[: 2 + int(latest_version_is_prerelease)]
     ]
     # devel
-    latest = packaging.version.Version(versions_sorted[0])
+    latest_major, latest_minor = versions_sorted[0].split(".")
     # NOTE assumes ansible-core is not 3.x :-|
-    supported_bugfix_versions[:0] = [f"{latest.major}.{latest.minor + 1}"]
+    supported_bugfix_versions[:0] = [f"{latest_major}.{int(latest_minor) + 1}"]
 
     return supported_bugfix_versions
 
