@@ -1860,15 +1860,23 @@ def get_gh_objects(
 
 
 def get_issues(q: queue.SimpleQueue):
-    for issue in get_gh_objects("issues", QUERY_ISSUE_NUMBERS):
-        q.put((issue, fetch_issue))
-    q.put(...)
+    try:
+        for issue in get_gh_objects("issues", QUERY_ISSUE_NUMBERS):
+            q.put((issue, fetch_issue))
+    except Exception as e:
+        logging.exception(e)
+    finally:
+        q.put(...)
 
 
 def get_prs(q: queue.SimpleQueue):
-    for pr in get_gh_objects("pullRequests", QUERY_PR_NUMBERS):
-        q.put((pr, fetch_pr))
-    q.put(...)
+    try:
+        for pr in get_gh_objects("pullRequests", QUERY_PR_NUMBERS):
+            q.put((pr, fetch_pr))
+    except Exception as e:
+        logging.exception(e)
+    finally:
+        q.put(...)
 
 
 def fetch_object(
