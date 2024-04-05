@@ -28,7 +28,7 @@ def ctx():
             "community.general",
             "community.vmware",
         ],
-        supported_bugfix_versions=[],
+        oldest_supported_bugfix_version=[],
         labels_to_ids_map={},
         updated_at=None,
     )

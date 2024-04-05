@@ -506,7 +506,7 @@ class TriageContext(t.Generic[GH_OBJ]):
     v29_flatten_modules: list[str]
     collections_to_redirect: list[str]
     labels_to_ids_map: dict[str, str]
-    supported_bugfix_versions: list[str]
+    oldest_supported_bugfix_version: tuple[int, int]
     updated_at: datetime.datetime
     commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
     cache: dict[int, CacheEntry] = dataclasses.field(default_factory=dict)
@@ -1182,19 +1182,19 @@ def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         return
     if match := VERSION_RE.search(obj.body):
         if match := VERSION_OUTPUT_RE.search(match.group(1)):
-            major_version = ".".join(match.group(1).split(".")[:2])
-            actions.to_label.append(f"affects_{major_version}")
+            version = tuple(int(c) for c in match.group(1).split(".")[:2])
+            actions.to_label.append(f"affects_{version}")
             if (
                 is_new_issue(obj)  # prevent spamming half the repo
                 and "bug" in actions.to_label
-                and major_version not in ctx.supported_bugfix_versions
+                and version < ctx.oldest_supported_bugfix_version
             ):
                 actions.comments.append(
                     template_comment(
                         "unsupported_version",
                         {
                             "author": obj.author,
-                            "version_reported": major_version,
+                            "version_reported": version,
                         },
                     )
                 )
@@ -1588,30 +1588,17 @@ _version_re = re.compile(
 )
 
 
-def get_supported_bugfix_versions() -> list[str]:
-    version_to_prerelease_map: dict[str, bool] = collections.defaultdict(lambda: True)
+def get_oldest_supported_bugfix_version() -> tuple[int, int]:
+    versions = set()
     for release in (
         http_request("https://pypi.org/pypi/ansible-core/json")
         .json()
         .get("releases", [])
     ):
-        if (m := _version_re.match(release)) is not None:
-            major_minor = ".".join(m.group("release").split(".")[:2])
-            version_to_prerelease_map[major_minor] &= bool(m.group("pre"))
-
-    versions_sorted: list[str] = sorted(version_to_prerelease_map.keys(), reverse=True)
-    latest_version_is_prerelease = version_to_prerelease_map[versions_sorted[0]]
-
-    # stable, stable-1, potentially prerelease
-    supported_bugfix_versions = [
-        v for v in versions_sorted[: 2 + int(latest_version_is_prerelease)]
-    ]
-    # devel
-    latest_major, latest_minor = versions_sorted[0].split(".")
-    # NOTE assumes ansible-core is not 3.x :-|
-    supported_bugfix_versions[:0] = [f"{latest_major}.{int(latest_minor) + 1}"]
-
-    return supported_bugfix_versions
+        if (m := _version_re.match(release)) is not None and not m.group("pre"):
+            versions.add(tuple(int(c) for c in m.group("release").split(".")[:2]))
+    # latest 3 core versions are supported, the last one is security only though
+    return sorted(versions, reverse=True)[1]
 
 
 def get_triage_context() -> TriageContext:
@@ -1653,7 +1640,7 @@ def get_triage_context() -> TriageContext:
         collections_to_redirect=http_request(COLLECTIONS_TO_REDIRECT_ENDPOINT)
         .raw_data.decode()
         .splitlines(),
-        supported_bugfix_versions=get_supported_bugfix_versions(),
+        oldest_supported_bugfix_version=get_oldest_supported_bugfix_version(),
         labels_to_ids_map={n: get_label_id(n) for n in VALID_LABELS},
         updated_at=datetime.datetime.now(datetime.timezone.utc),
     )
