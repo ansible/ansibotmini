@@ -1183,7 +1183,7 @@ def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if match := VERSION_RE.search(obj.body):
         if match := VERSION_OUTPUT_RE.search(match.group(1)):
             version = tuple(int(c) for c in match.group(1).split(".")[:2])
-            actions.to_label.append(f"affects_{version}")
+            actions.to_label.append(f"affects_{version[0]}.{version[1]}")
             if (
                 is_new_issue(obj)  # prevent spamming half the repo
                 and "bug" in actions.to_label
