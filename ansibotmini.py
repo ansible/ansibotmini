@@ -1035,12 +1035,14 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     template_comment(
                         "components_banner",
                         {
-                            "components": "\n".join(
-                                f"* [`{component}`](https://github.com/ansible/ansible/blob/devel/{component})"
-                                for component in existing_components
+                            "components": (
+                                "\n".join(
+                                    f"* [`{component}`](https://github.com/ansible/ansible/blob/devel/{component})"
+                                    for component in existing_components
+                                )
+                                if existing_components
+                                else None
                             )
-                            if existing_components
-                            else None
                         },
                     )
                 )
@@ -1592,11 +1594,7 @@ _version_re = re.compile(
 
 def get_oldest_supported_bugfix_version() -> tuple[int, int]:
     versions = set()
-    for release in (
-        http_request("https://pypi.org/pypi/ansible-core/json")
-        .json()
-        .get("releases", [])
-    ):
+    for release in http_request(ANSIBLE_CORE_PYPI_URL).json().get("releases", []):
         if (m := _version_re.match(release)) is not None and not m.group("pre"):
             versions.add(tuple(int(c) for c in m.group("release").split(".")[:2]))
     # latest 3 core versions are supported, the last one is security only though
