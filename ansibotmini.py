@@ -1546,7 +1546,7 @@ def is_command_applied(name: str, obj: GH_OBJ, ctx: TriageContext) -> bool:
     if last_applied and last_removed is None:
         return True
     if last_applied is None and last_removed:
-        raise AssertionError("Removed without being applied?")
+        logging.warning("'%s' removed without being applied?", name)
     if last_applied is None and last_removed is None:
         return False
     if last_applied > last_removed:
