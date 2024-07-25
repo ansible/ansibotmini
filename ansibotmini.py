@@ -368,8 +368,11 @@ last_commit: commits(last: 1) {
   nodes {
     commit {
       committedDate
-      checkSuites(last: 1) {
+      checkSuites(first: 5) {
         nodes {
+          app {
+            name
+          }
           checkRuns(last: 1) {
             nodes {
               name
@@ -1926,11 +1929,14 @@ def fetch_object(
             kwargs["last_reviewed_at"] = datetime.datetime.fromisoformat(
                 kwargs["last_reviewed_at"]
             )
+        last_commit = o["last_commit"]["nodes"][0]["commit"]
         kwargs["last_committed_at"] = datetime.datetime.fromisoformat(
-            o["last_commit"]["nodes"][0]["commit"]["committedDate"]
+            last_commit["committedDate"]
         )
-        if check_suite := o["last_commit"]["nodes"][0]["commit"]["checkSuites"][
-            "nodes"
+        if check_suite := [
+            cs
+            for cs in last_commit["checkSuites"]["nodes"]
+            if cs.get("app", {}).get("name") == "Azure Pipelines"
         ]:
             check_run = check_suite[0]["checkRuns"]["nodes"][0]
             build_id = int(
