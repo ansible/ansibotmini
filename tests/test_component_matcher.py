@@ -73,6 +73,10 @@ def existing_files():
         ("run_once", ["lib/ansible/plugins/strategy/__init__.py"]),
         ("force_handlers", ["lib/ansible/playbook/play.py"]),
         ("vars_prompt", ["lib/ansible/executor/playbook_executor.py"]),
+        (
+            "/lib/ansible/module_utils/facts/hardware/linux.py",
+            ["lib/ansible/module_utils/facts/hardware/linux.py"],
+        ),
     ],
 )
 def test_component_matcher(existing_files, in_data, expected):
