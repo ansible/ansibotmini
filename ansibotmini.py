@@ -778,7 +778,7 @@ def process_component(data):
             if len(space_split) > 5:
                 continue
             for c in space_split:
-                c = c.strip().lstrip("/")
+                c = c.strip().strip("`").lstrip("/")
                 if "/" in c:
                     if "#" in c:
                         c = c.split("#")[0]

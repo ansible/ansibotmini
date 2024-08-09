@@ -77,6 +77,10 @@ def existing_files():
             "/lib/ansible/module_utils/facts/hardware/linux.py",
             ["lib/ansible/module_utils/facts/hardware/linux.py"],
         ),
+        (
+            "`/lib/ansible/module_utils/facts/hardware/linux.py`",
+            ["lib/ansible/module_utils/facts/hardware/linux.py"],
+        ),
     ],
 )
 def test_component_matcher(existing_files, in_data, expected):
