@@ -466,6 +466,7 @@ class CI:
     cancelled: bool = False
     completed_at: datetime.datetime | None = None
     started_at: datetime.datetime | None = None
+    non_azp_failures: bool = False
 
     def is_running(self) -> bool:
         return self.build_id is not None and not self.completed
@@ -1213,7 +1214,7 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     resp = http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id)
     if resp.status_code == 404:
         # not available anymore
-        if obj.ci.passed:
+        if obj.ci.passed and not obj.ci.non_azp_failures:
             actions.to_unlabel.append("ci_verified")
         return
     failed_job_ids = []
@@ -1224,7 +1225,8 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             elif r["result"] == "canceled":
                 obj.ci.cancelled = True
     if not failed_job_ids:
-        actions.to_unlabel.append("ci_verified")
+        if not obj.ci.non_azp_failures:
+            actions.to_unlabel.append("ci_verified")
         return
     ci_comment = []
     ci_verifieds = []
@@ -1933,12 +1935,18 @@ def fetch_object(
         kwargs["last_committed_at"] = datetime.datetime.fromisoformat(
             last_commit["committedDate"]
         )
-        if check_suite := [
-            cs
-            for cs in last_commit["checkSuites"]["nodes"]
-            if cs.get("app", {}).get("name") == "Azure Pipelines"
-        ]:
-            check_run = check_suite[0]["checkRuns"]["nodes"][0]
+
+        check_run = None
+        non_azp_failures = False
+        for cs in last_commit["checkSuites"]["nodes"]:
+            if cs.get("app", {}).get("name") == "Azure Pipelines":
+                check_run = cs["checkRuns"]["nodes"][0]
+            else:
+                non_azp_failures |= (
+                    cs["checkRuns"]["nodes"][0]["conclusion"].lower() != "success"
+                )
+
+        if check_run:
             build_id = int(
                 AZP_BUILD_ID_RE.search(check_run["detailsUrl"]).group("buildId")
             )
@@ -1958,6 +1966,7 @@ def fetch_object(
                     cancelled=conclusion == "canceled",
                     completed_at=completed_at,
                     started_at=started_at,
+                    non_azp_failures=non_azp_failures,
                 )
             else:
                 kwargs["ci"] = CI(
