@@ -151,7 +151,7 @@ VALID_LABELS = {
 }
 
 COMMANDS_RE = re.compile(
-    f"^(?:@ansibot\s)?({'|'.join(VALID_COMMANDS)})\s*$", flags=re.MULTILINE
+    rf"^(?:@ansibot\s)?({'|'.join(VALID_COMMANDS)})\s*$", flags=re.MULTILINE
 )
 
 ANSIBLE_PLUGINS = frozenset(
