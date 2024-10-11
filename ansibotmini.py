@@ -419,7 +419,7 @@ class TriageNextTime(Exception):
     """Skip triaging an issue/PR due to the bot not receiving complete data to continue. Try next time."""
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class Response:
     status_code: int | None
     reason: str
@@ -437,7 +437,7 @@ class Issue:
     title: str
     body: str
     url: str
-    events: list[dict]
+    events: list[Event]
     labels: dict[str, str]
     updated_at: datetime.datetime
     components: list[str]
@@ -459,7 +459,7 @@ class PR(Issue):
     pushed_at: datetime.datetime | None
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class CI:
     build_id: int | None = None
     completed: bool = False
@@ -473,7 +473,7 @@ class CI:
         return self.build_id is not None and not self.completed
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class Command:
     updated_at: datetime.datetime
     arg: str | None = None
@@ -518,7 +518,7 @@ class TriageContext(t.Generic[GH_OBJ]):
     cache: dict[int, CacheEntry] = dataclasses.field(default_factory=dict)
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class CacheEntry:
     title: str
     url: str
@@ -883,9 +883,9 @@ def was_labeled_by_human(obj: GH_OBJ, label_name: str) -> bool:
     return any(
         e
         for e in obj.events
-        if e["name"] == "LabeledEvent"
-        and e["label"] == label_name
-        and e["author"] != BOT_ACCOUNT
+        if isinstance(e, LabeledEvent)
+        and e.label == label_name
+        and e.author != BOT_ACCOUNT
     )
 
 
@@ -893,18 +893,18 @@ def was_unlabeled_by_human(obj: GH_OBJ, label_name: str) -> bool:
     return any(
         e
         for e in obj.events
-        if e["name"] == "UnlabeledEvent"
-        and e["label"] == label_name
-        and e["author"] != BOT_ACCOUNT
+        if isinstance(e, UnlabeledEvent)
+        and e.label == label_name
+        and e.author != BOT_ACCOUNT
     )
 
 
 def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
     return max(
         (
-            e["created_at"]
+            e.created_at
             for e in obj.events
-            if e["name"] == "LabeledEvent" and e["label"] == name
+            if isinstance(e, LabeledEvent) and e.label == name
         ),
         default=None,
     )
@@ -913,9 +913,9 @@ def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
 def last_unlabeled(obj: GH_OBJ, name: str) -> datetime.datetime:
     return max(
         (
-            e["created_at"]
+            e.created_at
             for e in obj.events
-            if e["name"] == "UnlabeledEvent" and e["label"] == name
+            if isinstance(e, UnlabeledEvent) and e.label == name
         ),
         default=None,
     )
@@ -924,24 +924,24 @@ def last_unlabeled(obj: GH_OBJ, name: str) -> datetime.datetime:
 def last_commented_by(obj: GH_OBJ, name: str) -> datetime.datetime | None:
     return max(
         (
-            e["created_at"]
+            e.created_at
             for e in obj.events
-            if e["name"] == "IssueComment" and e["author"] == name
+            if isinstance(e, IssueCommentEvent) and e.author == name
         ),
         default=None,
     )
 
 
-def last_boilerplate(obj: GH_OBJ, name: str) -> dict[str, t.Any] | None:
+def last_boilerplate(obj: GH_OBJ, name: str) -> Event | None:
     return max(
         (
             e
             for e in obj.events
-            if e["name"] == "IssueComment"
-            and e["author"] == BOT_ACCOUNT
-            and f"<!--- boilerplate: {name} --->" in e["body"]
+            if isinstance(e, IssueCommentEvent)
+            and e.author == BOT_ACCOUNT
+            and f"<!--- boilerplate: {name} --->" in e.body
         ),
-        key=lambda x: x["created_at"],
+        key=lambda x: x.created_at,
         default=None,
     )
 
@@ -1020,7 +1020,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             if last_comment:
                 last_components = [
                     re.sub(r"[*`\[\]]", "", re.sub(r"\([^)]+\)", "", line)).strip()
-                    for line in last_comment["body"].splitlines()
+                    for line in last_comment.body.splitlines()
                     if line.startswith("*")
                 ]
                 post_comments_banner = sorted(existing_components) != sorted(
@@ -1033,7 +1033,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 or (
                     last_comment
                     and last_command
-                    and last_comment["created_at"] < last_command[0].updated_at
+                    and last_comment.created_at < last_command[0].updated_at
                 )
             ):
                 actions.comments.append(
@@ -1159,7 +1159,7 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     last_warned = last_boilerplate(obj, "needs_info_base")
                 if (
                     last_warned is None
-                    or last_warned["created_at"] < needs_info_labeled_date
+                    or last_warned.created_at < needs_info_labeled_date
                 ):
                     actions.comments.append(
                         template_comment(
@@ -1251,10 +1251,10 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         if not any(
             e
             for e in obj.events
-            if e["name"] == "IssueComment"
-            and e["author"] == BOT_ACCOUNT
-            and "<!--- boilerplate: ci_test_result --->" in e["body"]
-            and f"<!-- r_hash: {r_hash} -->" in e["body"]
+            if isinstance(e, IssueCommentEvent)
+            and e.author == BOT_ACCOUNT
+            and "<!--- boilerplate: ci_test_result --->" in e.body
+            and f"<!-- r_hash: {r_hash} -->" in e.body
         ):
             actions.comments.append(
                 template_comment(
@@ -1405,7 +1405,7 @@ def linked_objs(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         else:
             actions.to_unlabel.append("has_issue")
     elif isinstance(obj, Issue):
-        if [e for e in obj.events if e["name"] == "CrossReferencedEvent"]:
+        if any(e for e in obj.events if isinstance(e, CrossReferencedEvent)):
             actions.to_label.append("has_pr")
         else:
             actions.to_unlabel.append("has_pr")
@@ -1461,7 +1461,7 @@ def is_new_issue(obj: GH_OBJ) -> bool:
     return not any(
         e
         for e in obj.events
-        if e["name"] == "LabeledEvent" and e["label"] in ("needs_triage", "triage")
+        if isinstance(e, LabeledEvent) and e.label in ("needs_triage", "triage")
     )
 
 
@@ -1675,9 +1675,9 @@ def triage(
     bodies = itertools.chain(
         ((obj.author, obj.body, obj.updated_at),),
         (
-            (e["author"], e["body"], e["updated_at"])
+            (e.author, e.body, e.updated_at)
             for e in obj.events
-            if e["name"] == "IssueComment"
+            if isinstance(e, IssueCommentEvent)
         ),
     )
     ctx.commands_found = collections.defaultdict(list)
@@ -1799,33 +1799,88 @@ def triage(
     )
 
 
-def process_events(issue: dict[str, t.Any]) -> list[dict[str, str]]:
+@dataclasses.dataclass(frozen=True, slots=True)
+class Event:
+    created_at: datetime.datetime
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class LabeledEvent(Event):
+    label: str
+    author: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class UnlabeledEvent(Event):
+    label: str
+    author: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class IssueCommentEvent(Event):
+    body: str
+    updated_at: datetime.datetime
+    author: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class CrossReferencedEvent(Event):
+    number: int
+    repo: str
+    owner: str
+
+
+def process_events(issue: dict[str, t.Any]) -> list[Event]:
     rv = []
     for node in issue["timelineItems"]["nodes"]:
         if node is None:
             continue
-        event = {
-            "name": node["__typename"],
-            "created_at": datetime.datetime.fromisoformat(node["createdAt"]),
-        }
-        if node["__typename"] in ["LabeledEvent", "UnlabeledEvent"]:
-            event["label"] = node["label"]["name"]
-            event["author"] = node["actor"]["login"]
-        elif node["__typename"] == "IssueComment":
-            event["body"] = node["body"]
-            event["updated_at"] = datetime.datetime.fromisoformat(node["updatedAt"])
-            event["author"] = (
-                node["author"]["login"] if node["author"] is not None else ""
-            )
-        elif node["__typename"] == "CrossReferencedEvent" and node["source"]:
-            event["number"] = node["source"]["number"]
-            event["repo"] = node["source"]["repository"]
-            event["owner"] = (
-                node["source"]["repository"].get("owner", {}).get("name", "")
-            )
-        else:
-            continue
-        rv.append(event)
+
+        created_at = datetime.datetime.fromisoformat(node["createdAt"])
+        match node["__typename"]:
+            case "LabeledEvent":
+                rv.append(
+                    LabeledEvent(
+                        created_at=created_at,
+                        label=node["label"]["name"],
+                        author=node["actor"]["login"],
+                    )
+                )
+            case "UnlabeledEvent":
+                rv.append(
+                    UnlabeledEvent(
+                        created_at=created_at,
+                        label=node["label"]["name"],
+                        author=node["actor"]["login"],
+                    )
+                )
+            case "IssueComment":
+                rv.append(
+                    IssueCommentEvent(
+                        created_at=created_at,
+                        body=node["body"],
+                        updated_at=datetime.datetime.fromisoformat(node["updatedAt"]),
+                        author=(
+                            node["author"]["login"]
+                            if node["author"] is not None
+                            else ""
+                        ),
+                    )
+                )
+            case "CrossReferencedEvent":
+                if node["source"]:
+                    rv.append(
+                        CrossReferencedEvent(
+                            created_at=created_at,
+                            number=node["source"]["number"],
+                            repo=node["source"]["repository"],
+                            owner=(
+                                node["source"]["repository"]
+                                .get("owner", {})
+                                .get("name", "")
+                            ),
+                        )
+                    )
 
     return rv
 
