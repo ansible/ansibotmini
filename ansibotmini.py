@@ -459,7 +459,7 @@ class PR(Issue):
     pushed_at: datetime.datetime | None
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(slots=True)
 class CI:
     build_id: int | None = None
     completed: bool = False
