@@ -932,7 +932,7 @@ def last_commented_by(obj: GH_OBJ, name: str) -> datetime.datetime | None:
     )
 
 
-def last_boilerplate(obj: GH_OBJ, name: str) -> Event | None:
+def last_boilerplate(obj: GH_OBJ, name: str) -> IssueCommentEvent | None:
     return max(
         (
             e
@@ -1602,7 +1602,12 @@ def get_oldest_supported_bugfix_version() -> tuple[int, int]:
     versions = set()
     for release in http_request(ANSIBLE_CORE_PYPI_URL).json().get("releases", []):
         if (m := _version_re.match(release)) is not None and not m.group("pre"):
-            versions.add(tuple(int(c) for c in m.group("release").split(".")[:2]))
+            versions.add(
+                t.cast(
+                    tuple[int, int],
+                    tuple(int(c) for c in m.group("release").split(".")[:2]),
+                )
+            )
     # latest 3 core versions are supported, the last one is security only though
     return sorted(versions, reverse=True)[1]
 
