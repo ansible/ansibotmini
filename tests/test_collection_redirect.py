@@ -21,12 +21,19 @@ def ctx():
         collections_file_map=collections_file_map,
         committers=[],
         devel_file_list=[],
-        v29_file_list=["lib/ansible/plugins/action/patch.py"],
-        v29_flatten_modules=["lib/ansible/modules/vmware_guest_disk.py"],
+        v29_file_list=[
+            "lib/ansible/modules/cloud/amazon/ec2_instance.py",
+            "lib/ansible/plugins/action/patch.py",
+        ],
+        v29_flatten_modules=[
+            "lib/ansible/modules/ec2_instance.py",
+            "lib/ansible/modules/vmware_guest_disk.py",
+        ],
         collections_to_redirect=[
             "ansible.posix",
             "community.general",
             "community.vmware",
+            "amazon.aws",
         ],
         oldest_supported_bugfix_version=[],
         labels_to_ids_map={},
@@ -69,6 +76,11 @@ def ctx():
             "not.a.fq.cn",
             "not.a.fq.cn",
             [],
+        ),
+        (
+            "ec2_instance",
+            "plugins/modules/ec2_instance.py",
+            ["amazon.aws"],
         ),
     ],
 )

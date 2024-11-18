@@ -799,7 +799,7 @@ def process_component(data):
                         .replace(".ps1", "")
                     )
 
-                if c := re.sub(r"[^1a-zA-Z/._-]", "", c):
+                if c := re.sub(r"[^0-9a-zA-Z/._-]", "", c):
                     if (flatten := flatten_module_path(c)) != c:
                         rv.append(flatten)
                     if len(c) > 1:
