@@ -639,6 +639,13 @@ def get_label_id(name: str) -> str:
 
 
 def add_labels(obj: GH_OBJ, labels: list[str], ctx: TriageContext) -> None:
+    if not (
+        label_ids := [
+            ctx.labels_to_ids_map.get(label, get_label_id(label)) for label in labels
+        ]
+    ):
+        return
+
     query = """
     mutation($input: AddLabelsToLabelableInput!) {
       addLabelsToLabelable(input:$input) {
@@ -651,10 +658,7 @@ def add_labels(obj: GH_OBJ, labels: list[str], ctx: TriageContext) -> None:
             "query": query,
             "variables": {
                 "input": {
-                    "labelIds": [
-                        ctx.labels_to_ids_map.get(label, get_label_id(label))
-                        for label in labels
-                    ],
+                    "labelIds": label_ids,
                     "labelableId": obj.id,
                 },
             },
@@ -663,6 +667,11 @@ def add_labels(obj: GH_OBJ, labels: list[str], ctx: TriageContext) -> None:
 
 
 def remove_labels(obj: GH_OBJ, labels: list[str]) -> None:
+    if not (
+        label_ids := [obj.labels[label] for label in labels if label in obj.labels]
+    ):
+        return
+
     query = """
     mutation($input: RemoveLabelsFromLabelableInput!) {
       removeLabelsFromLabelable(input:$input) {
@@ -675,9 +684,7 @@ def remove_labels(obj: GH_OBJ, labels: list[str]) -> None:
             "query": query,
             "variables": {
                 "input": {
-                    "labelIds": [
-                        obj.labels[label] for label in labels if label in obj.labels
-                    ],
+                    "labelIds": label_ids,
                     "labelableId": obj.id,
                 },
             },
