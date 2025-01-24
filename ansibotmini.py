@@ -80,6 +80,7 @@ V29_FILE_LIST = (
 )
 
 STALE_CI_DAYS = 7
+STALE_PR_DAYS = 365
 STALE_ISSUE_DAYS = 7
 NEEDS_INFO_WARN_DAYS = 14
 NEEDS_INFO_CLOSE_DAYS = 28
@@ -1290,7 +1291,21 @@ def needs_revision(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_unlabel.append("needs_revision")
 
 
+def stale_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+    if not isinstance(obj, PR):
+        return
+
+    if days_since(obj.pushed_at) > STALE_PR_DAYS:
+        actions.to_label.append("stale_pr")
+    else:
+        actions.to_unlabel.append("stale_pr")
+
+
 def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+    if "stale_pr" in actions.to_label:
+        actions.to_unlabel.append("needs_ci")
+        return
+
     if (
         not isinstance(obj, PR)
         or "needs_rebase" in actions.to_label
@@ -1527,6 +1542,7 @@ bot_funcs = [
     ci_comments,  # order matters, must be before needs_ci
     needs_revision,
     needs_rebase,  # order matters, must be before needs_ci
+    stale_pr,  # order matters, must be before needs_ci
     needs_ci,
     stale_ci,
     backport,
