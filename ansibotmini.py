@@ -979,7 +979,8 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             )
 
         for command in ctx.commands_found.get("component", []):
-            op, path = command.arg[0], command.arg[1:].replace("`", "").replace("\_", "_")
+            op = command.arg[0]
+            path = command.arg[1:].replace("`", "").replace(r"\_", "_")
             if path not in ctx.devel_file_list:
                 processed_components.append(path)
                 continue
