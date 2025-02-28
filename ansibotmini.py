@@ -546,7 +546,7 @@ def http_request(
     url: str,
     data: str = "",
     headers: t.MutableMapping[str, str] | None = None,
-    method: str = "GET",
+    method: t.Literal["GET", "POST", "PATCH"] = "GET",
     retries: int = 3,
 ) -> Response:
     if headers is None:
@@ -1409,7 +1409,7 @@ def cancel_ci(build_id: int) -> None:
     logging.info("Cancelling CI buildId %d", build_id)
     resp = http_request(
         url=AZP_BUILD_URL_FMT % build_id,
-        method="patch",
+        method="PATCH",
         headers={
             "Content-Type": "application/json",
             "Authorization": "Basic {}".format(
@@ -1860,7 +1860,7 @@ class CrossReferencedEvent(Event):
 
 
 def process_events(issue: dict[str, t.Any]) -> list[Event]:
-    rv = []
+    rv: list[Event] = []
     for node in issue["timelineItems"]["nodes"]:
         if node is None:
             continue
