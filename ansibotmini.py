@@ -693,6 +693,16 @@ def remove_labels(obj: GH_OBJ, labels: list[str]) -> None:
     )
 
 
+MAX_COMMENT_LEN = 65536
+
+
+def _sanitize_comment(body: str) -> str:
+    if len(body) <= MAX_COMMENT_LEN:
+        return body
+    ommited_msg = "... [omitted, message too long]"
+    return f"{body[:MAX_COMMENT_LEN - len(ommited_msg)]}{ommited_msg}"
+
+
 def add_comment(obj: GH_OBJ, body: str) -> None:
     query = """
     mutation($input: AddCommentInput!) {
@@ -706,7 +716,7 @@ def add_comment(obj: GH_OBJ, body: str) -> None:
             "query": query,
             "variables": {
                 "input": {
-                    "body": body,
+                    "body": _sanitize_comment(body),
                     "subjectId": obj.id,
                 },
             },
