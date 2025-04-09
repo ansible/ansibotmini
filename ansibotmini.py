@@ -693,16 +693,6 @@ def remove_labels(obj: GH_OBJ, labels: list[str]) -> None:
     )
 
 
-MAX_COMMENT_LEN = 65536
-
-
-def _sanitize_comment(body: str) -> str:
-    if len(body) <= MAX_COMMENT_LEN:
-        return body
-    ommited_msg = "... [omitted, message too long]"
-    return f"{body[:MAX_COMMENT_LEN - len(ommited_msg)]}{ommited_msg}"
-
-
 def add_comment(obj: GH_OBJ, body: str) -> None:
     query = """
     mutation($input: AddCommentInput!) {
@@ -716,7 +706,7 @@ def add_comment(obj: GH_OBJ, body: str) -> None:
             "query": query,
             "variables": {
                 "input": {
-                    "body": _sanitize_comment(body),
+                    "body": body,
                     "subjectId": obj.id,
                 },
             },
@@ -1228,6 +1218,15 @@ def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 )
 
 
+def _sanitize_ci_comment(body: str) -> str:
+    # GitHub allows up to 65536 but leave room for metadata/etc
+    max_comment_len = 60000
+    if len(body) <= max_comment_len:
+        return body
+    ommited_msg = "... [omitted, message too long]"
+    return f"{body[:max_comment_len - len(ommited_msg)]}{ommited_msg}"
+
+
 def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR) or not obj.ci.completed:
         return
@@ -1265,7 +1264,7 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 for r in artifact_data["results"]:
                     ci_comment.append(f"{r['message']}\n```\n{r['output']}\n```\n")
     if ci_comment:
-        results = "\n".join(ci_comment)
+        results = _sanitize_ci_comment("\n".join(ci_comment))
         r_hash = hashlib.md5(results.encode()).hexdigest()
         if not any(
             e
