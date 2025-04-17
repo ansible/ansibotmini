@@ -71,7 +71,7 @@ COLLECTIONS_LIST_ENDPOINT = "https://sivel.eng.ansible.com/api/v1/collections/li
 COLLECTIONS_FILEMAP_ENDPOINT = (
     "https://sivel.eng.ansible.com/api/v1/collections/file_map"
 )
-COLLECTIONS_TO_REDIRECT_ENDPOINT = "https://raw.githubusercontent.com/ansible-community/ansible-build-data/main/7/ansible.in"
+COLLECTIONS_TO_REDIRECT_ENDPOINT = "https://raw.githubusercontent.com/ansible-community/ansible-build-data/main/12/ansible.in"
 DEVEL_FILE_LIST = (
     "https://api.github.com/repos/ansible/ansible/git/trees/devel?recursive=1"
 )
