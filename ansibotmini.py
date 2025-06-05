@@ -444,6 +444,13 @@ class Issue:
     components: list[str]
     last_triaged_at: datetime.datetime | None
 
+    def is_new(self) -> bool:
+        return not any(
+            e
+            for e in self.events
+            if isinstance(e, LabeledEvent) and e.label in ("needs_triage", "triage")
+        )
+
 
 @dataclasses.dataclass(slots=True)
 class PR(Issue):
@@ -1038,7 +1045,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
             last_command = ctx.commands_found.get("component", [])[-1:]
             if post_comments_banner and (
-                is_new_issue(obj)
+                obj.is_new()
                 or (
                     last_comment
                     and last_command
@@ -1124,7 +1131,7 @@ def is_in_collection(components: list[str], ctx: TriageContext) -> dict[str, set
 
 
 def needs_triage(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if is_new_issue(obj):
+    if obj.is_new():
         actions.to_label.append("needs_triage")
 
 
@@ -1203,7 +1210,7 @@ def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             version_s = f"{version[0]}.{version[1]}"
             actions.to_label.append(f"affects_{version_s}")
             if (
-                is_new_issue(obj)  # prevent spamming half the repo
+                obj.is_new()  # prevent spamming half the repo
                 and "bug" in actions.to_label
                 and version < ctx.oldest_supported_bugfix_version
             ):
@@ -1466,7 +1473,7 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         missing.remove("Component Name")
 
     if missing:
-        if is_new_issue(obj):  # do not spam old issues
+        if obj.is_new():  # do not spam old issues
             actions.to_label.append("needs_template")
             actions.to_label.append("needs_info")
             if last_boilerplate(obj, "issue_missing_data") is None:
@@ -1487,14 +1494,6 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             and "needs_info" not in ctx.commands_found
         ):
             actions.to_unlabel.append("needs_info")
-
-
-def is_new_issue(obj: GH_OBJ) -> bool:
-    return not any(
-        e
-        for e in obj.events
-        if isinstance(e, LabeledEvent) and e.label in ("needs_triage", "triage")
-    )
 
 
 def test_support_plugin(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
