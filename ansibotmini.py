@@ -2039,7 +2039,7 @@ def fetch_object(
                     cs["checkRuns"]["nodes"][0]["conclusion"].lower() != "success"
                 )
 
-        if check_run:
+        if check_run and (conclusion := (check_run["conclusion"] or "").lower()) != "action_required":
             build_id = int(
                 AZP_BUILD_ID_RE.search(check_run["detailsUrl"]).group("buildId")
             )
@@ -2051,7 +2051,6 @@ def fetch_object(
                     )
                 except TypeError:
                     completed_at = None
-                conclusion = (check_run["conclusion"] or "").lower()
                 kwargs["ci"] = CI(
                     build_id=build_id,
                     completed=check_run["status"].lower() == "completed",
