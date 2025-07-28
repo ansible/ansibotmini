@@ -128,6 +128,7 @@ VALID_LABELS = {
     "affects_2.17",
     "affects_2.18",
     "affects_2.19",
+    "affects_2.20",
     "backport",
     "bot_broken",
     "bot_closed",
@@ -2039,7 +2040,9 @@ def fetch_object(
                     cs["checkRuns"]["nodes"][0]["conclusion"].lower() != "success"
                 )
 
-        if check_run and (conclusion := (check_run["conclusion"] or "").lower()) != "action_required":
+        if check_run and (
+            (conclusion := (check_run["conclusion"] or "").lower()) != "action_required"
+        ):
             build_id = int(
                 AZP_BUILD_ID_RE.search(check_run["detailsUrl"]).group("buildId")
             )
