@@ -2040,12 +2040,15 @@ def fetch_object(
                     cs["checkRuns"]["nodes"][0]["conclusion"].lower() != "success"
                 )
 
-        if check_run and (
-            (conclusion := (check_run["conclusion"] or "").lower()) != "action_required"
-        ):
-            build_id = int(
-                AZP_BUILD_ID_RE.search(check_run["detailsUrl"]).group("buildId")
+        if (
+            check_run
+            and (
+                (conclusion := (check_run["conclusion"] or "").lower())
+                != "action_required"
             )
+            and (azp_match := AZP_BUILD_ID_RE.search(check_run["detailsUrl"]))
+        ):
+            build_id = int(azp_match.group("buildId"))
             started_at = datetime.datetime.fromisoformat(check_run["startedAt"])
             if check_run["name"] == "CI":
                 try:
