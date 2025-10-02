@@ -508,7 +508,6 @@ class Actions:
 
 
 GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
-GH_OBJ_T = t.TypeVar("GH_OBJ_T", t.Type[Issue], t.Type[PR])
 
 
 @dataclasses.dataclass(slots=True)
@@ -1980,11 +1979,11 @@ def get_prs(q: queue.SimpleQueue):
 
 def fetch_object(
     number: int,
-    obj: GH_OBJ_T,
+    obj: t.Type[GH_OBJ],
     object_name: str,
     query: str,
     updated_at: datetime.datetime | None = None,
-) -> Issue | PR:
+) -> GH_OBJ:
     logging.info("Getting %s #%d", object_name, number)
     resp = send_query({"query": query, "variables": {"number": number}})
     data = resp.json()["data"]
