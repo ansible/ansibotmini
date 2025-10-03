@@ -290,7 +290,7 @@ query($number: Int!)
           name
         }
       }
-      timelineItems(first: 200, itemTypes: [ISSUE_COMMENT, LABELED_EVENT, UNLABELED_EVENT, CROSS_REFERENCED_EVENT]) {
+      timelineItems(first: 200, itemTypes: [ISSUE_COMMENT, LABELED_EVENT, UNLABELED_EVENT]) {
         pageInfo {
             endCursor
             hasNextPage
@@ -323,22 +323,6 @@ query($number: Int!)
               name
             }
           }
-          ... on CrossReferencedEvent {
-            createdAt
-            source {
-              ... on PullRequest {
-                number
-                repository {
-                  name
-                  owner {
-                    ... on Organization {
-                      name
-                    }
-                  }
-                }
-              }
-            }
-          }
         }
       }
       %s
@@ -353,7 +337,16 @@ query($number: Int!)
 }
 """
 
-QUERY_SINGLE_ISSUE = QUERY_SINGLE_TMPL % ("issue", "")
+QUERY_SINGLE_ISSUE = QUERY_SINGLE_TMPL % (
+    "issue",
+    """
+closedByPullRequestsReferences(last: 1) {
+  nodes {
+    number
+  }
+}
+    """,
+)
 
 QUERY_SINGLE_PR = QUERY_SINGLE_TMPL % (
     "pullRequest",
@@ -432,7 +425,7 @@ class Response:
 
 
 @dataclasses.dataclass(slots=True)
-class Issue:
+class IssueBase:
     id: str
     author: str
     number: int
@@ -454,7 +447,12 @@ class Issue:
 
 
 @dataclasses.dataclass(slots=True)
-class PR(Issue):
+class Issue(IssueBase):
+    has_pr: bool
+
+
+@dataclasses.dataclass(slots=True)
+class PR(IssueBase):
     branch: str
     files: list[str]
     mergeable: str
@@ -1444,7 +1442,7 @@ def linked_objs(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         else:
             actions.to_unlabel.append("has_issue")
     elif isinstance(obj, Issue):
-        if any(e for e in obj.events if isinstance(e, CrossReferencedEvent)):
+        if obj.has_pr:
             actions.to_label.append("has_pr")
         else:
             actions.to_unlabel.append("has_pr")
@@ -1860,13 +1858,6 @@ class IssueCommentEvent(Event):
     author: str
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class CrossReferencedEvent(Event):
-    number: int
-    repo: str
-    owner: str
-
-
 def process_events(issue: dict[str, t.Any]) -> list[Event]:
     rv: list[Event] = []
     for node in issue["timelineItems"]["nodes"]:
@@ -1904,20 +1895,6 @@ def process_events(issue: dict[str, t.Any]) -> list[Event]:
                         ),
                     )
                 )
-            case "CrossReferencedEvent":
-                if node["source"]:
-                    rv.append(
-                        CrossReferencedEvent(
-                            created_at=created_at,
-                            number=node["source"]["number"],
-                            repo=node["source"]["repository"],
-                            owner=(
-                                node["source"]["repository"]
-                                .get("owner", {})
-                                .get("name", "")
-                            ),
-                        )
-                    )
 
     return rv
 
@@ -1980,7 +1957,7 @@ def get_prs(q: queue.SimpleQueue):
 def fetch_object(
     number: int,
     obj: t.Type[GH_OBJ],
-    object_name: str,
+    object_name: t.Literal["issue", "pullRequest"],
     query: str,
     updated_at: datetime.datetime | None = None,
 ) -> GH_OBJ:
@@ -2005,7 +1982,9 @@ def fetch_object(
         "components": [],
         "last_triaged_at": None,
     }
-    if object_name == "pullRequest":
+    if object_name == "issue":
+        kwargs["has_pr"] = bool(len(o["closedByPullRequestsReferences"]["nodes"]))
+    elif object_name == "pullRequest":
         kwargs["created_at"] = datetime.datetime.fromisoformat(o["createdAt"])
         kwargs["branch"] = o["baseRef"]["name"]
         kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
