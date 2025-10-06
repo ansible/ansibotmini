@@ -363,6 +363,9 @@ files(first: 50) {
 last_commit: commits(last: 1) {
   nodes {
     commit {
+      statusCheckRollup {
+        state
+      }
       committedDate
       checkSuites(first: 5) {
         nodes {
@@ -475,6 +478,7 @@ class CI:
     completed_at: datetime.datetime | None = None
     started_at: datetime.datetime | None = None
     non_azp_failures: bool = False
+    pending: bool = False
 
     def is_running(self) -> bool:
         return self.build_id is not None and not self.completed
@@ -1367,6 +1371,16 @@ def stale_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_unlabel.append("stale_ci")
 
 
+def pending_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+    if not isinstance(obj, PR):
+        return
+
+    if obj.ci.pending:
+        actions.to_label.append("pending_ci")
+    else:
+        actions.to_unlabel.append("pending_ci")
+
+
 def backport(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
@@ -1552,6 +1566,7 @@ bot_funcs = [
     stale_pr,  # order matters, must be before needs_ci
     needs_ci,
     stale_ci,
+    pending_ci,
     backport,
     is_module,
     stale_review,
@@ -2051,6 +2066,9 @@ def fetch_object(
                 )
         else:
             kwargs["ci"] = CI()
+
+        if status_check := last_commit.get("statusCheckRollup", {}):
+            kwargs["ci"].pending = status_check.get("state", "").lower() == "pending"
 
         repo = o["headRepository"]
         kwargs["from_repo"] = (
