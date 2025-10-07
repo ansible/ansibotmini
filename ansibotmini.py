@@ -145,6 +145,7 @@ VALID_LABELS = {
     "needs_template",
     "needs_triage",
     "networking",
+    "pending_ci",
     "pre_azp",
     "stale_ci",
     "stale_review",
@@ -645,7 +646,10 @@ def get_label_id(name: str) -> str:
     }
     """
     resp = send_query({"query": query, "variables": {"name": name}})
-    return resp.json()["data"]["repository"]["label"]["id"]
+    if label := resp.json()["data"]["repository"]["label"]:
+        return label["id"]
+    else:
+        raise ValueError(f"Label {name!r} does not exist.")
 
 
 def add_labels(obj: GH_OBJ, labels: list[str], ctx: TriageContext) -> None:
