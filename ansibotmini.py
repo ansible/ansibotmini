@@ -1379,7 +1379,11 @@ def pending_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR):
         return
 
-    if obj.ci.pending:
+    if (
+        obj.ci.pending
+        and (datetime.datetime.now(datetime.timezone.utc) - obj.pushed_at).seconds
+        > 60 * 60  # wait one hour after last push to the PR before declaring "stuck CI"
+    ):
         actions.to_label.append("pending_ci")
     else:
         actions.to_unlabel.append("pending_ci")
