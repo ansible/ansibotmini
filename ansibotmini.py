@@ -920,7 +920,7 @@ def was_unlabeled_by_human(obj: GH_OBJ, label_name: str) -> bool:
     )
 
 
-def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
+def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime | None:
     return max(
         (
             e.created_at
@@ -931,7 +931,7 @@ def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime:
     )
 
 
-def last_unlabeled(obj: GH_OBJ, name: str) -> datetime.datetime:
+def last_unlabeled(obj: GH_OBJ, name: str) -> datetime.datetime | None:
     return max(
         (
             e.created_at
