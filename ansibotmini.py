@@ -214,7 +214,7 @@ ISSUE_BUG_TEMPLATE_SECTIONS = frozenset(
     )
 )
 
-LABLES_DO_NOT_OVERRIDE = {
+LABELS_DO_NOT_OVERRIDE = {
     "bug",
     "feature",
     "has_pr",
@@ -1796,7 +1796,7 @@ def triage(
         for l in actions.to_label
         if l not in obj.labels
         and not (
-            (l in LABLES_DO_NOT_OVERRIDE or l.startswith("affects_"))
+            (l in LABELS_DO_NOT_OVERRIDE or l.startswith("affects_"))
             and was_unlabeled_by_human(obj, l)
         )
     ]
@@ -1805,7 +1805,7 @@ def triage(
         for l in actions.to_unlabel
         if l in obj.labels
         and not (
-            (l in LABLES_DO_NOT_OVERRIDE or l.startswith("affects_"))
+            (l in LABELS_DO_NOT_OVERRIDE or l.startswith("affects_"))
             and was_labeled_by_human(obj, l)
         )
     ]
