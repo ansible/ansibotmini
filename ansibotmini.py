@@ -2315,7 +2315,12 @@ def generate_byfile_page(cache: dict[int, CacheEntry]):
     with tempfile.NamedTemporaryFile(dir=".", delete=False) as f:
         f.write("".join(data))
 
-    os.rename(f.name, BYFILE_PAGE_FILENAME)
+    try:
+        os.chmod(f.name, 0o644)
+        os.rename(f.name, BYFILE_PAGE_FILENAME)
+    except OSError:
+        os.unlink(f.name)
+        raise
 
     logging.info("%s generated", BYFILE_PAGE_FILENAME)
 
