@@ -26,6 +26,7 @@ import re
 import string
 import subprocess
 import sys
+import tempfile
 import time
 import typing as t
 import urllib.error
@@ -2311,8 +2312,11 @@ def generate_byfile_page(cache: dict[int, CacheEntry]):
             )
         data.append("<br />\n")
 
-    with open(BYFILE_PAGE_FILENAME, "w") as f:
+    with tempfile.NamedTemporaryFile(dir=".", delete=False) as f:
         f.write("".join(data))
+
+    os.rename(f.name, BYFILE_PAGE_FILENAME)
+
     logging.info("%s generated", BYFILE_PAGE_FILENAME)
 
 
