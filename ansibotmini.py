@@ -46,7 +46,7 @@ try:
 except subprocess.CalledProcessError:
     __version__ = "unknown"
 
-minimal_required_python_version = (3, 12)
+minimal_required_python_version = (3, 13)
 if sys.version_info < minimal_required_python_version:
     raise SystemExit(
         f"ansibotmini requires Python {'.'.join((str(e) for e in minimal_required_python_version))} or newer. "

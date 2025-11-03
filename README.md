@@ -1,6 +1,6 @@
 # ansibotmini
 
-* is a Python 3.12+ program that acts as a bot for processing issues and pull requests in the `ansible/ansible` GitHub repository
+* is a Python 3.13+ program that acts as a bot for processing issues and pull requests in the `ansible/ansible` GitHub repository
 * implements custom developer workflow of the Ansible Core Engineering team
 * only uses https://github.com/ansibot GitHub account for all communication on the issues and pull requests
 
