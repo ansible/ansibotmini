@@ -27,6 +27,7 @@ import string
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import typing as t
 import urllib.error
@@ -414,6 +415,9 @@ closingIssuesReferences(last: 1) {
 """,
 )
 
+_http_request_lock = threading.Lock()
+_http_request_counter = 0
+
 
 class TriageNextTime(Exception):
     """Skip triaging an issue/PR due to the bot not receiving complete data to continue. Try next time."""
@@ -566,10 +570,13 @@ def http_request(
     wait_seconds = 10
     for i in range(retries):
         try:
-            http_request.counter = getattr(http_request, "counter", 0) + 1
+            global _http_request_counter
+            with _http_request_lock:
+                _http_request_counter += 1
+                counter_value = _http_request_counter
             logging.info(
                 "http request no. %d: %s %s",
-                http_request.counter,
+                counter_value,
                 method,
                 url,
             )
@@ -2152,7 +2159,8 @@ def daemon(
     ctx = None
     while True:
         logging.info("Starting triage")
-        http_request.counter = 0
+        global _http_request_counter
+        _http_request_counter = 0
         start = time.time()
         if ctx is None or days_since(ctx.updated_at) >= 2:
             ctx = get_triage_context()
@@ -2175,7 +2183,7 @@ def daemon(
                     generate_byfile_page(ctx.cache)
 
             logging.info(
-                f"Took {time.time() - start:.2f} seconds and {http_request.counter} HTTP requests to check for new/stale "
+                f"Took {time.time() - start:.2f} seconds and {_http_request_counter} HTTP requests to check for new/stale "
                 f"issues/PRs{f' and triage {n} of them.' if n else '.'}",
             )
         logging.info("Sleeping for %d minutes", SLEEP_SECONDS // 60)
