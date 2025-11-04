@@ -2327,7 +2327,7 @@ def generate_byfile_page(cache: dict[int, CacheEntry]):
             )
         data.append("<br />\n")
 
-    with tempfile.NamedTemporaryFile(dir=".", delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", dir=".", delete=False) as f:
         f.write("".join(data))
 
     try:
