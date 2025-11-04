@@ -2177,8 +2177,15 @@ def daemon(
                     ctx.cache[obj.number] = CacheEntry.from_obj(obj)
         finally:
             if n:
-                with open(CACHE_FILENAME, "wb") as f:
+                with tempfile.NamedTemporaryFile(dir=".", delete=False) as f:
                     pickle.dump(ctx.cache, f)
+
+                try:
+                    os.chmod(f.name, 0o644)
+                    os.rename(f.name, CACHE_FILENAME)
+                except OSError:
+                    os.unlink(f.name)
+                    raise
                 if generate_byfile:
                     generate_byfile_page(ctx.cache)
 
