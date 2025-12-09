@@ -519,7 +519,7 @@ GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
 
 
 @dataclasses.dataclass(slots=True)
-class TriageContext(t.Generic[GH_OBJ]):
+class TriageContext:
     collections_list: dict[str, t.Any] | None
     collections_file_map: dict[str, t.Any] | None
     committers: list[str]
@@ -532,6 +532,53 @@ class TriageContext(t.Generic[GH_OBJ]):
     updated_at: datetime.datetime
     commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
     cache: dict[int, CacheEntry] = dataclasses.field(default_factory=dict)
+
+    @classmethod
+    def fetch(cls) -> t.Self:
+        devel_file_list = [
+            e["path"]
+            for e in http_request(
+                DEVEL_FILE_LIST, headers={"Authorization": f"Bearer {gh_token}"}
+            ).json()["tree"]
+        ]
+        v29_file_list = [
+            e["path"]
+            for e in http_request(
+                V29_FILE_LIST, headers={"Authorization": f"Bearer {gh_token}"}
+            ).json()["tree"]
+        ]
+        v29_flatten_modules = []
+        for f in v29_file_list:
+            if f.startswith("lib/ansible/modules") and f.endswith((".py", ".ps1")):
+                if (possibly_flatten := flatten_module_path(f)) not in v29_file_list:
+                    v29_flatten_modules.append(possibly_flatten)
+
+        collections_list = None
+        collections_file_map = None
+        try:
+            collections_list = http_request(COLLECTIONS_LIST_ENDPOINT).json()
+            collections_file_map = http_request(COLLECTIONS_FILEMAP_ENDPOINT).json()
+        except urllib.error.HTTPError as e:
+            logging.error("%s: %d %s", e.url, e.status, e.reason)
+        except (TimeoutError, urllib.error.URLError) as e:
+            logging.error("%s: %s", COLLECTIONS_LIST_ENDPOINT, e)
+
+        return cls(
+            collections_list=collections_list,
+            collections_file_map=collections_file_map,
+            committers=get_committers(),
+            devel_file_list=devel_file_list,
+            v29_file_list=v29_file_list,
+            v29_flatten_modules=v29_flatten_modules,
+            collections_to_redirect=(
+                http_request(COLLECTIONS_TO_REDIRECT_ENDPOINT)
+                .raw_data.decode()
+                .splitlines()
+            ),
+            oldest_supported_bugfix_version=get_oldest_supported_bugfix_version(),
+            labels_to_ids_map={n: get_label_id(n) for n in VALID_LABELS},
+            updated_at=datetime.datetime.now(datetime.timezone.utc),
+        )
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1673,51 +1720,6 @@ def get_oldest_supported_bugfix_version() -> tuple[int, int]:
     return sorted(versions, reverse=True)[1]
 
 
-def get_triage_context() -> TriageContext:
-    devel_file_list = [
-        e["path"]
-        for e in http_request(
-            DEVEL_FILE_LIST, headers={"Authorization": f"Bearer {gh_token}"}
-        ).json()["tree"]
-    ]
-    v29_file_list = [
-        e["path"]
-        for e in http_request(
-            V29_FILE_LIST, headers={"Authorization": f"Bearer {gh_token}"}
-        ).json()["tree"]
-    ]
-    v29_flatten_modules = []
-    for f in v29_file_list:
-        if f.startswith("lib/ansible/modules") and f.endswith((".py", ".ps1")):
-            if (possibly_flatten := flatten_module_path(f)) not in v29_file_list:
-                v29_flatten_modules.append(possibly_flatten)
-
-    collections_list = None
-    collections_file_map = None
-    try:
-        collections_list = http_request(COLLECTIONS_LIST_ENDPOINT).json()
-        collections_file_map = http_request(COLLECTIONS_FILEMAP_ENDPOINT).json()
-    except urllib.error.HTTPError as e:
-        logging.error("%s: %d %s", e.url, e.status, e.reason)
-    except (TimeoutError, urllib.error.URLError) as e:
-        logging.error("%s: %s", COLLECTIONS_LIST_ENDPOINT, e)
-
-    return TriageContext(
-        collections_list=collections_list,
-        collections_file_map=collections_file_map,
-        committers=get_committers(),
-        devel_file_list=devel_file_list,
-        v29_file_list=v29_file_list,
-        v29_flatten_modules=v29_flatten_modules,
-        collections_to_redirect=http_request(COLLECTIONS_TO_REDIRECT_ENDPOINT)
-        .raw_data.decode()
-        .splitlines(),
-        oldest_supported_bugfix_version=get_oldest_supported_bugfix_version(),
-        labels_to_ids_map={n: get_label_id(n) for n in VALID_LABELS},
-        updated_at=datetime.datetime.now(datetime.timezone.utc),
-    )
-
-
 def triage(
     obj: GH_OBJ,
     ctx: TriageContext,
@@ -2163,7 +2165,7 @@ def daemon(
         _http_request_counter = 0
         start = time.time()
         if ctx is None or days_since(ctx.updated_at) >= 2:
-            ctx = get_triage_context()
+            ctx = TriageContext.fetch()
             ctx.cache = cache
 
         n = 0
@@ -2282,7 +2284,7 @@ def main() -> None:
     if args.number:
         triage(
             fetch_object_by_number(args.number),
-            get_triage_context(),
+            TriageContext.fetch(),
             dry_run=args.dry_run,
             ask=args.ask,
             ignore_bot_skip=args.ignore_bot_skip,
