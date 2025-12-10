@@ -381,7 +381,6 @@ last_commit: commits(last: 1) {
               detailsUrl
               completedAt
               conclusion
-              status
               startedAt
             }
           }
@@ -792,7 +791,6 @@ class PR(Base):
                     completed_at = None
                 kwargs["ci"] = CI(
                     build_id=build_id,
-                    completed=check_run["status"].lower() == "completed",
                     passed=conclusion == "success",
                     cancelled=conclusion == "canceled",
                     completed_at=completed_at,
@@ -822,7 +820,6 @@ class PR(Base):
 @dataclasses.dataclass(slots=True)
 class CI:
     build_id: int | None = None
-    completed: bool = False
     passed: bool = False
     cancelled: bool = False
     completed_at: datetime.datetime | None = None
@@ -831,7 +828,7 @@ class CI:
     pending: bool = False
 
     def is_running(self) -> bool:
-        return self.build_id is not None and not self.completed
+        return self.build_id is not None and self.completed_at is None
 
     def cancel(self) -> None:
         if self.is_running():
@@ -853,7 +850,7 @@ class CI:
 @dataclasses.dataclass(frozen=True, slots=True)
 class Command:
     updated_at: datetime.datetime
-    arg: str | None = None
+    args: list[str] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass(slots=True)
@@ -1214,8 +1211,9 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             )
 
         for command in obj.commands_found.get("component", []):
-            op = command.arg[0]
-            path = command.arg[1:].replace("`", "").replace(r"\_", "_")
+            arg = command.args[0]
+            op = arg[0]
+            path = arg[1:].replace("`", "").replace(r"\_", "_")
             if path not in ctx.devel_file_list:
                 processed_components.append(path)
                 continue
@@ -1363,10 +1361,8 @@ def needs_triage(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if (
-        "waiting_on_contributor" in obj.labels
-        and days_since(obj.last_labeled("waiting_on_contributor"))
-        > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
+    if (labeled_date := obj.last_labeled("waiting_on_contributor")) and (
+        days_since(labeled_date) > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
     ):
         actions.close = True
         actions.to_label.append("bot_closed")
@@ -1460,7 +1456,7 @@ def _sanitize_ci_comment(body: str) -> str:
 
 
 def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, PR) or not obj.ci.completed:
+    if not isinstance(obj, PR) or obj.ci.completed_at is None:
         return
     resp = http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id)
     if resp.status_code == 404:
@@ -1512,8 +1508,8 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 )
             )
     if (all(ci_verifieds) and len(ci_verifieds) == len(failed_job_ids)) or (
-        "ci_verified" in obj.labels
-        and obj.last_labeled("ci_verified") >= obj.ci.completed_at
+        (labeled_date := obj.last_labeled("ci_verified"))
+        and labeled_date >= obj.ci.completed_at
     ):
         actions.to_label.append("ci_verified")
     else:
@@ -1521,7 +1517,7 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def needs_revision(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, PR) or not obj.ci.completed:
+    if not isinstance(obj, PR) or obj.ci.completed_at is None:
         return
     if (
         obj.changes_requested
@@ -1586,7 +1582,7 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 
 
 def stale_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if not isinstance(obj, PR) or not obj.ci.completed:
+    if not isinstance(obj, PR) or obj.ci.completed_at is None:
         return
     if days_since(obj.ci.completed_at) > STALE_CI_DAYS:
         actions.to_label.append("stale_ci")
@@ -1866,7 +1862,7 @@ def triage(
             continue
         for component in COMPONENT_COMMAND_RE.findall(body):
             obj.commands_found["component"].append(
-                Command(updated_at=updated_at, arg=component)
+                Command(updated_at=updated_at, args=[component])
             )
 
     if not ignore_bot_skip:
