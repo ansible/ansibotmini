@@ -434,7 +434,7 @@ class Response:
 
 
 @dataclasses.dataclass(slots=True)
-class IssueBase:
+class Base:
     id: str
     author: str
     number: int
@@ -446,6 +446,9 @@ class IssueBase:
     updated_at: datetime.datetime
     components: list[str]
     last_triaged_at: datetime.datetime | None
+    commands_found: dict[str, list[Command]] = dataclasses.field(
+        init=False, default_factory=dict
+    )
 
     def is_new(self) -> bool:
         return not any(
@@ -456,12 +459,12 @@ class IssueBase:
 
 
 @dataclasses.dataclass(slots=True)
-class Issue(IssueBase):
+class Issue(Base):
     has_pr: bool
 
 
 @dataclasses.dataclass(slots=True)
-class PR(IssueBase):
+class PR(Base):
     branch: str
     files: list[str]
     mergeable: str
@@ -518,7 +521,7 @@ class Actions:
 GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class TriageContext:
     collections_list: dict[str, t.Any] | None
     collections_file_map: dict[str, t.Any] | None
@@ -530,7 +533,6 @@ class TriageContext:
     labels_to_ids_map: dict[str, str]
     oldest_supported_bugfix_version: tuple[int, int]
     updated_at: datetime.datetime
-    commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def fetch(cls) -> t.Self:
@@ -1045,7 +1047,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 processed_components, ctx.devel_file_list
             )
 
-        for command in ctx.commands_found.get("component", []):
+        for command in obj.commands_found.get("component", []):
             op = command.arg[0]
             path = command.arg[1:].replace("`", "").replace(r"\_", "_")
             if path not in ctx.devel_file_list:
@@ -1068,7 +1070,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         post_comments_banner = True
         if (
             not existing_components
-            and "!needs_collection_redirect" not in ctx.commands_found
+            and "!needs_collection_redirect" not in obj.commands_found
         ):
             if entries := is_in_collection(processed_components, ctx):
                 assembled_entries = []
@@ -1103,7 +1105,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     last_components
                 )
 
-            last_command = ctx.commands_found.get("component", [])[-1:]
+            last_command = obj.commands_found.get("component", [])[-1:]
             if post_comments_banner and (
                 obj.is_new()
                 or (
@@ -1543,7 +1545,7 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         ):
             missing.append(section)
 
-    if "Component Name" in missing and "component" in ctx.commands_found:
+    if "Component Name" in missing and "component" in obj.commands_found:
         missing.remove("Component Name")
 
     if missing:
@@ -1565,7 +1567,7 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_unlabel.append("needs_template")
         if (
             not was_labeled_by_human(obj, "needs_info")
-            and "needs_info" not in ctx.commands_found
+            and "needs_info" not in obj.commands_found
         ):
             actions.to_unlabel.append("needs_info")
 
@@ -1642,14 +1644,14 @@ bot_funcs = [
 
 def is_command_applied(name: str, obj: GH_OBJ, ctx: TriageContext) -> bool:
     applied = []
-    if name in ctx.commands_found:
-        applied.append(ctx.commands_found[name][-1].updated_at)
+    if name in obj.commands_found:
+        applied.append(obj.commands_found[name][-1].updated_at)
     if d := last_labeled(obj, name):
         applied.append(d)
 
     removed = []
-    if f"!{name}" in ctx.commands_found:
-        removed.append(ctx.commands_found[f"!{name}"][-1].updated_at)
+    if f"!{name}" in obj.commands_found:
+        removed.append(obj.commands_found[f"!{name}"][-1].updated_at)
     if d := last_unlabeled(obj, name):
         removed.append(d)
 
@@ -1738,16 +1740,16 @@ def triage(
             if isinstance(e, IssueCommentEvent)
         ),
     )
-    ctx.commands_found = collections.defaultdict(list)
+    obj.commands_found = collections.defaultdict(list)
     for author, body, updated_at in bodies:
         for command in COMMANDS_RE.findall(body):
             if command in {"bot_skip", "!bot_skip"} and author not in ctx.committers:
                 continue
-            ctx.commands_found[command].append(Command(updated_at=updated_at))
+            obj.commands_found[command].append(Command(updated_at=updated_at))
         if isinstance(obj, PR):
             continue
         for component in COMPONENT_COMMAND_RE.findall(body):
-            ctx.commands_found["component"].append(
+            obj.commands_found["component"].append(
                 Command(updated_at=updated_at, arg=component)
             )
 
