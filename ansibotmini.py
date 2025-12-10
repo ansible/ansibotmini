@@ -2104,11 +2104,9 @@ def fetch_pr(number: int, updated_at: datetime.datetime | None = None) -> PR:
 
 def fetch_object_by_number(number: int) -> Issue | PR:
     try:
-        obj = fetch_issue(number)
+        return fetch_issue(number)
     except ValueError:
-        obj = fetch_pr(number)
-
-    return obj
+        return fetch_pr(number)
 
 
 def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ, None, None]:
@@ -2147,8 +2145,8 @@ def daemon(
     ignore_bot_skip: bool = False,
 ) -> None:
     try:
-        with open(CACHE_FILENAME, "rb") as f:
-            cache = pickle.load(f)
+        with open(CACHE_FILENAME, "rb") as cf:
+            cache = pickle.load(cf)
     except (OSError, EOFError) as e:
         cache = {}
         logging.info("Could not use cache: '%s'", e)
