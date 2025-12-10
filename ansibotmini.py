@@ -457,10 +457,194 @@ class Base:
             if isinstance(e, LabeledEvent) and e.label in ("needs_triage", "triage")
         )
 
+    def was_labeled_by_human(self, label_name: str) -> bool:
+        return any(
+            e
+            for e in self.events
+            if isinstance(e, LabeledEvent)
+            and e.label == label_name
+            and e.author != BOT_ACCOUNT
+        )
+
+    def was_unlabeled_by_human(self, label_name: str) -> bool:
+        return any(
+            e
+            for e in self.events
+            if isinstance(e, UnlabeledEvent)
+            and e.label == label_name
+            and e.author != BOT_ACCOUNT
+        )
+
+    def last_labeled(self, name: str) -> datetime.datetime | None:
+        return max(
+            (
+                e.created_at
+                for e in self.events
+                if isinstance(e, LabeledEvent) and e.label == name
+            ),
+            default=None,
+        )
+
+    def last_unlabeled(self, name: str) -> datetime.datetime | None:
+        return max(
+            (
+                e.created_at
+                for e in self.events
+                if isinstance(e, UnlabeledEvent) and e.label == name
+            ),
+            default=None,
+        )
+
+    def last_commented_by(self, name: str) -> datetime.datetime | None:
+        return max(
+            (
+                e.created_at
+                for e in self.events
+                if isinstance(e, IssueCommentEvent) and e.author == name
+            ),
+            default=None,
+        )
+
+    def last_boilerplate(self, name: str) -> IssueCommentEvent | None:
+        return max(
+            (
+                e
+                for e in self.events
+                if isinstance(e, IssueCommentEvent)
+                and e.author == BOT_ACCOUNT
+                and f"<!--- boilerplate: {name} --->" in e.body
+            ),
+            key=lambda x: x.created_at,
+            default=None,
+        )
+
+    def is_command_applied(self, name: str) -> bool:
+        applied = []
+        if name in self.commands_found:
+            applied.append(self.commands_found[name][-1].updated_at)
+        if d := self.last_labeled(name):
+            applied.append(d)
+
+        removed = []
+        if f"!{name}" in self.commands_found:
+            removed.append(self.commands_found[f"!{name}"][-1].updated_at)
+        if d := self.last_unlabeled(name):
+            removed.append(d)
+
+        last_applied = max(applied, default=None)
+        last_removed = max(removed, default=None)
+
+        if last_applied and last_removed is None:
+            return True
+        elif last_applied is None and last_removed:
+            logging.warning("'%s' removed without being applied?", name)
+        elif last_applied is None and last_removed is None:
+            return False
+        elif last_applied > last_removed:
+            return True
+
+        return False
+
+    def add_labels(self, labels: list[str], ctx: TriageContext) -> None:
+        if not (
+            label_ids := [
+                ctx.labels_to_ids_map.get(label, get_label_id(label))
+                for label in labels
+            ]
+        ):
+            return
+
+        query = """
+        mutation($input: AddLabelsToLabelableInput!) {
+          addLabelsToLabelable(input:$input) {
+            clientMutationId
+          }
+        }
+        """
+        send_query(
+            {
+                "query": query,
+                "variables": {
+                    "input": {
+                        "labelIds": label_ids,
+                        "labelableId": self.id,
+                    },
+                },
+            }
+        )
+
+    def remove_labels(self, labels: list[str]) -> None:
+        if not (
+            label_ids := [
+                self.labels[label] for label in labels if label in self.labels
+            ]
+        ):
+            return
+
+        query = """
+        mutation($input: RemoveLabelsFromLabelableInput!) {
+          removeLabelsFromLabelable(input:$input) {
+            clientMutationId
+          }
+        }
+        """
+        send_query(
+            {
+                "query": query,
+                "variables": {
+                    "input": {
+                        "labelIds": label_ids,
+                        "labelableId": self.id,
+                    },
+                },
+            }
+        )
+
+    def add_comment(self, body: str) -> None:
+        query = """
+        mutation($input: AddCommentInput!) {
+          addComment(input:$input) {
+            clientMutationId
+          }
+        }
+        """
+        send_query(
+            {
+                "query": query,
+                "variables": {
+                    "input": {
+                        "body": body,
+                        "subjectId": self.id,
+                    },
+                },
+            }
+        )
+
 
 @dataclasses.dataclass(slots=True)
 class Issue(Base):
     has_pr: bool
+
+    def close(self) -> None:
+        logging.info("Closing issue #%d", self.number)
+        query = """
+        mutation($input: CloseIssueInput!) {
+          closeIssue(input:$input) {
+            clientMutationId
+          }
+        }
+        """
+        send_query(
+            {
+                "query": query,
+                "variables": {
+                    "input": {
+                        "issueId": self.id,
+                        "stateReason": "NOT_PLANNED",
+                    },
+                },
+            }
+        )
 
 
 @dataclasses.dataclass(slots=True)
@@ -476,6 +660,42 @@ class PR(Base):
     has_issue: bool
     created_at: datetime.datetime
     pushed_at: datetime.datetime
+
+    def close(self) -> None:
+        try:
+            if self.ci.is_running():
+                logging.info("Cancelling CI buildId %d", self.ci.build_id)
+                resp = http_request(
+                    url=AZP_BUILD_URL_FMT % self.ci.build_id,
+                    method="PATCH",
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": "Basic {}".format(
+                            base64.b64encode(f":{azp_token}".encode()).decode()
+                        ),
+                    },
+                    data=json.dumps({"status": "Cancelling"}),
+                )
+                logging.info("Cancelled with status_code: %d", resp.status_code)
+        finally:
+            logging.info("Closing PR #%d", self.number)
+            query = """
+            mutation($input: ClosePullRequestInput!) {
+              closePullRequest(input:$input) {
+                clientMutationId
+              }
+            }
+            """
+            send_query(
+                {
+                    "query": query,
+                    "variables": {
+                        "input": {
+                            "pullRequestId": self.id,
+                        },
+                    },
+                }
+            )
 
 
 @dataclasses.dataclass(slots=True)
@@ -504,18 +724,10 @@ class Actions:
     to_label: list[str] = dataclasses.field(default_factory=list)
     to_unlabel: list[str] = dataclasses.field(default_factory=list)
     comments: list[str] = dataclasses.field(default_factory=list)
-    cancel_ci: bool = False
     close: bool = False
-    close_reason: str | None = None
 
     def __bool__(self):
-        return bool(
-            self.to_label
-            or self.to_unlabel
-            or self.comments
-            or self.cancel_ci
-            or self.close
-        )
+        return bool(self.to_label or self.to_unlabel or self.comments or self.close)
 
 
 GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
@@ -708,122 +920,6 @@ def get_label_id(name: str) -> str:
         raise ValueError(f"Label {name!r} does not exist.")
 
 
-def add_labels(obj: GH_OBJ, labels: list[str], ctx: TriageContext) -> None:
-    if not (
-        label_ids := [
-            ctx.labels_to_ids_map.get(label, get_label_id(label)) for label in labels
-        ]
-    ):
-        return
-
-    query = """
-    mutation($input: AddLabelsToLabelableInput!) {
-      addLabelsToLabelable(input:$input) {
-        clientMutationId
-      }
-    }
-    """
-    send_query(
-        {
-            "query": query,
-            "variables": {
-                "input": {
-                    "labelIds": label_ids,
-                    "labelableId": obj.id,
-                },
-            },
-        }
-    )
-
-
-def remove_labels(obj: GH_OBJ, labels: list[str]) -> None:
-    if not (
-        label_ids := [obj.labels[label] for label in labels if label in obj.labels]
-    ):
-        return
-
-    query = """
-    mutation($input: RemoveLabelsFromLabelableInput!) {
-      removeLabelsFromLabelable(input:$input) {
-        clientMutationId
-      }
-    }
-    """
-    send_query(
-        {
-            "query": query,
-            "variables": {
-                "input": {
-                    "labelIds": label_ids,
-                    "labelableId": obj.id,
-                },
-            },
-        }
-    )
-
-
-def add_comment(obj: GH_OBJ, body: str) -> None:
-    query = """
-    mutation($input: AddCommentInput!) {
-      addComment(input:$input) {
-        clientMutationId
-      }
-    }
-    """
-    send_query(
-        {
-            "query": query,
-            "variables": {
-                "input": {
-                    "body": body,
-                    "subjectId": obj.id,
-                },
-            },
-        }
-    )
-
-
-def close_issue(obj_id: str, reason: str) -> None:
-    query = """
-    mutation($input: CloseIssueInput!) {
-      closeIssue(input:$input) {
-        clientMutationId
-      }
-    }
-    """
-    send_query(
-        {
-            "query": query,
-            "variables": {
-                "input": {
-                    "issueId": obj_id,
-                    "stateReason": reason,
-                },
-            },
-        }
-    )
-
-
-def close_pr(obj_id: str) -> None:
-    query = """
-    mutation($input: ClosePullRequestInput!) {
-      closePullRequest(input:$input) {
-        clientMutationId
-      }
-    }
-    """
-    send_query(
-        {
-            "query": query,
-            "variables": {
-                "input": {
-                    "pullRequestId": obj_id,
-                },
-            },
-        }
-    )
-
-
 def get_committers() -> list[str]:
     query = """
     query {
@@ -956,73 +1052,6 @@ def match_existing_components(
     return list(components)
 
 
-def was_labeled_by_human(obj: GH_OBJ, label_name: str) -> bool:
-    return any(
-        e
-        for e in obj.events
-        if isinstance(e, LabeledEvent)
-        and e.label == label_name
-        and e.author != BOT_ACCOUNT
-    )
-
-
-def was_unlabeled_by_human(obj: GH_OBJ, label_name: str) -> bool:
-    return any(
-        e
-        for e in obj.events
-        if isinstance(e, UnlabeledEvent)
-        and e.label == label_name
-        and e.author != BOT_ACCOUNT
-    )
-
-
-def last_labeled(obj: GH_OBJ, name: str) -> datetime.datetime | None:
-    return max(
-        (
-            e.created_at
-            for e in obj.events
-            if isinstance(e, LabeledEvent) and e.label == name
-        ),
-        default=None,
-    )
-
-
-def last_unlabeled(obj: GH_OBJ, name: str) -> datetime.datetime | None:
-    return max(
-        (
-            e.created_at
-            for e in obj.events
-            if isinstance(e, UnlabeledEvent) and e.label == name
-        ),
-        default=None,
-    )
-
-
-def last_commented_by(obj: GH_OBJ, name: str) -> datetime.datetime | None:
-    return max(
-        (
-            e.created_at
-            for e in obj.events
-            if isinstance(e, IssueCommentEvent) and e.author == name
-        ),
-        default=None,
-    )
-
-
-def last_boilerplate(obj: GH_OBJ, name: str) -> IssueCommentEvent | None:
-    return max(
-        (
-            e
-            for e in obj.events
-            if isinstance(e, IssueCommentEvent)
-            and e.author == BOT_ACCOUNT
-            and f"<!--- boilerplate: {name} --->" in e.body
-        ),
-        key=lambda x: x.created_at,
-        default=None,
-    )
-
-
 def days_since(when: datetime.datetime) -> int:
     return (datetime.datetime.now(datetime.timezone.utc) - when).days
 
@@ -1090,11 +1119,10 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                 )
                 actions.to_label.append("bot_closed")
                 actions.close = True
-                actions.close_reason = "NOT_PLANNED"
                 post_comments_banner = False
 
         if post_comments_banner:
-            last_comment = last_boilerplate(obj, "components_banner")
+            last_comment = obj.last_boilerplate("components_banner")
             if last_comment:
                 last_components = [
                     re.sub(r"[*`\[\]]", "", re.sub(r"\([^)]+\)", "", line)).strip()
@@ -1200,20 +1228,19 @@ def needs_triage(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
 def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if (
         "waiting_on_contributor" in obj.labels
-        and days_since(last_labeled(obj, "waiting_on_contributor"))
+        and days_since(obj.last_labeled("waiting_on_contributor"))
         > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
     ):
         actions.close = True
-        actions.close_reason = "NOT_PLANNED"
         actions.to_label.append("bot_closed")
         actions.to_unlabel.append("waiting_on_contributor")
         actions.comments.append(template_comment("waiting_on_contributor"))
 
 
 def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if needs_info_labeled_date := last_labeled(obj, "needs_info"):
-        needs_info_unlabeled_date = last_unlabeled(obj, "needs_info")
-        commented_datetime = last_commented_by(obj, obj.author)
+    if needs_info_labeled_date := obj.last_labeled("needs_info"):
+        needs_info_unlabeled_date = obj.last_unlabeled("needs_info")
+        commented_datetime = obj.last_commented_by(obj.author)
         if (
             commented_datetime is None or needs_info_labeled_date > commented_datetime
         ) and (
@@ -1223,7 +1250,6 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             days_labeled = days_since(needs_info_labeled_date)
             if days_labeled > NEEDS_INFO_CLOSE_DAYS:
                 actions.close = True
-                actions.close_reason = "NOT_PLANNED"
                 actions.to_label.append("bot_closed")
                 actions.comments.append(
                     template_comment(
@@ -1232,9 +1258,9 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     )
                 )
             elif days_labeled > NEEDS_INFO_WARN_DAYS:
-                last_warned = last_boilerplate(obj, "needs_info_warn")
+                last_warned = obj.last_boilerplate("needs_info_warn")
                 if last_warned is None:
-                    last_warned = last_boilerplate(obj, "needs_info_base")
+                    last_warned = obj.last_boilerplate("needs_info_base")
                 if (
                     last_warned is None
                     or last_warned.created_at < needs_info_labeled_date
@@ -1350,7 +1376,7 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             )
     if (all(ci_verifieds) and len(ci_verifieds) == len(failed_job_ids)) or (
         "ci_verified" in obj.labels
-        and last_labeled(obj, "ci_verified") >= obj.ci.completed_at
+        and obj.last_labeled("ci_verified") >= obj.ci.completed_at
     ):
         actions.to_label.append("ci_verified")
     else:
@@ -1489,28 +1515,9 @@ def pr_from_upstream(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     if not isinstance(obj, PR) or obj.from_repo != "ansible/ansible":
         return
     actions.close = True
-    actions.close_reason = "NOT_PLANNED"
     actions.comments.append(
         template_comment("pr_from_upstream", {"author": obj.author})
     )
-    if obj.ci.is_running():
-        actions.cancel_ci = True
-
-
-def cancel_ci(build_id: int) -> None:
-    logging.info("Cancelling CI buildId %d", build_id)
-    resp = http_request(
-        url=AZP_BUILD_URL_FMT % build_id,
-        method="PATCH",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": "Basic {}".format(
-                base64.b64encode(f":{azp_token}".encode()).decode()
-            ),
-        },
-        data=json.dumps({"status": "Cancelling"}),
-    )
-    logging.info("Cancelled with status_code: %d", resp.status_code)
 
 
 def linked_objs(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
@@ -1552,7 +1559,7 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         if obj.is_new():  # do not spam old issues
             actions.to_label.append("needs_template")
             actions.to_label.append("needs_info")
-            if last_boilerplate(obj, "issue_missing_data") is None:
+            if obj.last_boilerplate("issue_missing_data") is None:
                 actions.comments.append(
                     template_comment(
                         "issue_missing_data",
@@ -1566,7 +1573,7 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     else:
         actions.to_unlabel.append("needs_template")
         if (
-            not was_labeled_by_human(obj, "needs_info")
+            not obj.was_labeled_by_human("needs_info")
             and "needs_info" not in obj.commands_found
         ):
             actions.to_unlabel.append("needs_info")
@@ -1599,7 +1606,7 @@ def test_support_plugin(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> No
         else:
             data.append("Could not find a match in collections.")
 
-    if data and last_boilerplate(obj, "test_support_plugins") is None:
+    if data and obj.last_boilerplate("test_support_plugins") is None:
         actions.comments.append(
             template_comment(
                 "test_support_plugins", {"author": obj.author, "data": "\n".join(data)}
@@ -1640,34 +1647,6 @@ bot_funcs = [
     test_support_plugin,
     networking,
 ]
-
-
-def is_command_applied(name: str, obj: GH_OBJ, ctx: TriageContext) -> bool:
-    applied = []
-    if name in obj.commands_found:
-        applied.append(obj.commands_found[name][-1].updated_at)
-    if d := last_labeled(obj, name):
-        applied.append(d)
-
-    removed = []
-    if f"!{name}" in obj.commands_found:
-        removed.append(obj.commands_found[f"!{name}"][-1].updated_at)
-    if d := last_unlabeled(obj, name):
-        removed.append(d)
-
-    last_applied = max(applied, default=None)
-    last_removed = max(removed, default=None)
-
-    if last_applied and last_removed is None:
-        return True
-    elif last_applied is None and last_removed:
-        logging.warning("'%s' removed without being applied?", name)
-    elif last_applied is None and last_removed is None:
-        return False
-    elif last_applied > last_removed:
-        return True
-
-    return False
 
 
 # https://packaging.python.org/en/latest/specifications/version-specifiers/#version-specifiers-regex
@@ -1754,7 +1733,7 @@ def triage(
             )
 
     if not ignore_bot_skip:
-        if is_command_applied("bot_broken", obj, ctx):
+        if obj.is_command_applied("bot_broken"):
             obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
             logging.info(
                 "Skipping %s %s (#%d) due to bot_broken",
@@ -1763,11 +1742,11 @@ def triage(
                 obj.number,
             )
             if not dry_run:
-                add_labels(obj, ["bot_broken"], ctx)
+                obj.add_labels(["bot_broken"], ctx)
             return
         if not dry_run:
-            remove_labels(obj, ["bot_broken"])
-        if is_command_applied("bot_skip", obj, ctx):
+            obj.remove_labels(["bot_broken"])
+        if obj.is_command_applied("bot_skip"):
             obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
             logging.info(
                 "Skipping %s %s (#%d) due to bot_skip",
@@ -1799,7 +1778,7 @@ def triage(
         if l not in obj.labels
         and not (
             (l in LABELS_DO_NOT_OVERRIDE or l.startswith("affects_"))
-            and was_unlabeled_by_human(obj, l)
+            and obj.was_unlabeled_by_human(l)
         )
     ]
     actions.to_unlabel = [
@@ -1808,7 +1787,7 @@ def triage(
         if l in obj.labels
         and not (
             (l in LABELS_DO_NOT_OVERRIDE or l.startswith("affects_"))
-            and was_labeled_by_human(obj, l)
+            and obj.was_labeled_by_human(l)
         )
     ]
 
@@ -1832,22 +1811,15 @@ def triage(
 
             if take_actions:
                 if actions.to_label:
-                    add_labels(obj, actions.to_label, ctx)
+                    obj.add_labels(actions.to_label, ctx)
                 if actions.to_unlabel:
-                    remove_labels(obj, actions.to_unlabel)
+                    obj.remove_labels(actions.to_unlabel)
 
                 for comment in actions.comments:
-                    add_comment(obj, comment)
-
-                if actions.cancel_ci:
-                    cancel_ci(obj.ci.build_id)
+                    obj.add_comment(comment)
 
                 if actions.close:
-                    logging.info("%s #%d: closing", obj.__class__.__name__, obj.number)
-                    if isinstance(obj, PR):
-                        close_pr(obj.id)
-                    else:
-                        close_issue(obj.id, actions.close_reason)
+                    obj.close()
             else:
                 logging.info("Skipping taking actions")
         else:
