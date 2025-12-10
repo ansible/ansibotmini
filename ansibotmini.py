@@ -131,6 +131,7 @@ VALID_LABELS = {
     "affects_2.18",
     "affects_2.19",
     "affects_2.20",
+    "affects_2.21",
     "backport",
     "bot_broken",
     "bot_closed",
