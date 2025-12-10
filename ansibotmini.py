@@ -531,7 +531,6 @@ class TriageContext:
     oldest_supported_bugfix_version: tuple[int, int]
     updated_at: datetime.datetime
     commands_found: dict[str, list[Command]] = dataclasses.field(default_factory=dict)
-    cache: dict[int, CacheEntry] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def fetch(cls) -> t.Self:
@@ -1730,12 +1729,6 @@ def triage(
     logging.info("Triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number)
     logging.info(obj.url)
 
-    if isinstance(obj, PR) and (cached_obj := ctx.cache.get(obj.number)) is not None:
-        if obj.last_committed_at != cached_obj.last_committed_at:
-            obj.pushed_at = datetime.datetime.now(datetime.timezone.utc)
-        else:
-            obj.pushed_at = cached_obj.pushed_at
-
     # commands
     bodies = itertools.chain(
         ((obj.author, obj.body, obj.updated_at),),
@@ -2144,36 +2137,44 @@ def daemon(
     ask: bool = False,
     ignore_bot_skip: bool = False,
 ) -> None:
+    cache: dict[int, CacheEntry] = {}
     try:
         with open(CACHE_FILENAME, "rb") as cf:
             cache = pickle.load(cf)
     except (OSError, EOFError) as e:
-        cache = {}
         logging.info("Could not use cache: '%s'", e)
 
-    ctx = None
+    ctx = TriageContext.fetch()
     while True:
         logging.info("Starting triage")
         global _http_request_counter
         _http_request_counter = 0
         start = time.time()
-        if ctx is None or days_since(ctx.updated_at) >= 2:
+        if days_since(ctx.updated_at) >= 2:
             ctx = TriageContext.fetch()
-            ctx.cache = cache
 
         n = 0
         try:
-            for n, obj in enumerate(fetch_objects(ctx.cache), 1):
+            for n, obj in enumerate(fetch_objects(cache), 1):
+                if (
+                    isinstance(obj, PR)
+                    and (cached_obj := cache.get(obj.number)) is not None
+                ):
+                    if obj.last_committed_at != cached_obj.last_committed_at:
+                        obj.pushed_at = datetime.datetime.now(datetime.timezone.utc)
+                    else:
+                        obj.pushed_at = cached_obj.pushed_at
+
                 try:
                     triage(obj, ctx, dry_run, ask, ignore_bot_skip)
                 except TriageNextTime as e:
                     logging.warning(e)
                 else:
-                    ctx.cache[obj.number] = CacheEntry.from_obj(obj)
+                    cache[obj.number] = CacheEntry.from_obj(obj)
         finally:
             if n:
                 with tempfile.NamedTemporaryFile(dir=".", delete=False) as f:
-                    pickle.dump(ctx.cache, f)
+                    pickle.dump(cache, f)
 
                 try:
                     os.chmod(f.name, 0o644)
@@ -2182,7 +2183,7 @@ def daemon(
                     os.unlink(f.name)
                     raise
                 if generate_byfile:
-                    generate_byfile_page(ctx.cache)
+                    generate_byfile_page(cache)
 
             logging.info(
                 f"Took {time.time() - start:.2f} seconds and {_http_request_counter} HTTP requests to check for new/stale "
