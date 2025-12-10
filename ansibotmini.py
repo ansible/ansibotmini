@@ -472,7 +472,7 @@ class PR(IssueBase):
     from_repo: str
     has_issue: bool
     created_at: datetime.datetime
-    pushed_at: datetime.datetime | None
+    pushed_at: datetime.datetime
 
 
 @dataclasses.dataclass(slots=True)
@@ -1730,11 +1730,8 @@ def triage(
     logging.info("Triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number)
     logging.info(obj.url)
 
-    if isinstance(obj, PR):
-        cached_obj = ctx.cache.get(obj.number)
-        if cached_obj is None:
-            obj.pushed_at = obj.last_committed_at
-        elif obj.last_committed_at != cached_obj.last_committed_at:
+    if isinstance(obj, PR) and (cached_obj := ctx.cache.get(obj.number)) is not None:
+        if obj.last_committed_at != cached_obj.last_committed_at:
             obj.pushed_at = datetime.datetime.now(datetime.timezone.utc)
         else:
             obj.pushed_at = cached_obj.pushed_at
@@ -2037,8 +2034,8 @@ def fetch_object(
                 kwargs["last_reviewed_at"]
             )
         last_commit = o["last_commit"]["nodes"][0]["commit"]
-        kwargs["last_committed_at"] = datetime.datetime.fromisoformat(
-            last_commit["committedDate"]
+        kwargs["last_committed_at"] = kwargs["pushed_at"] = (
+            datetime.datetime.fromisoformat(last_commit["committedDate"])
         )
 
         check_run = None
@@ -2093,7 +2090,6 @@ def fetch_object(
             f"{repo['owner']['login']}/{repo['name']}" if repo else "ghost/ghost"
         )
         kwargs["has_issue"] = len(o["closingIssuesReferences"]["nodes"]) > 0
-        kwargs["pushed_at"] = None
 
     return obj(**kwargs)
 
@@ -2111,7 +2107,6 @@ def fetch_object_by_number(number: int) -> Issue | PR:
         obj = fetch_issue(number)
     except ValueError:
         obj = fetch_pr(number)
-        obj.pushed_at = obj.last_committed_at
 
     return obj
 
