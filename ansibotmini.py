@@ -646,6 +646,37 @@ class Issue(Base):
             }
         )
 
+    @classmethod
+    def fetch(cls, number: int, updated_at: datetime.datetime | None = None) -> t.Self:
+        logging.info("Getting issue #%d", number)
+        resp = send_query(
+            {"query": QUERY_SINGLE_ISSUE, "variables": {"number": number}}
+        )
+        data = resp.json()["data"]
+        logging.info(ratelimit_to_str(data["rateLimit"]))
+        o = data["repository"]["issue"]
+        if o is None:
+            raise ValueError(f"{number} not found")
+
+        kwargs = {
+            "id": o["id"],
+            "author": o["author"]["login"] if o["author"] else "ghost",
+            "number": o["number"],
+            "title": o["title"],
+            "body": o["body"],
+            "url": o["url"],
+            "events": process_events(o),
+            "labels": {
+                node["name"]: node["id"] for node in o["labels"].get("nodes", [])
+            },
+            "updated_at": updated_at,
+            "components": [],
+            "last_triaged_at": None,
+            "has_pr": bool(len(o["closedByPullRequestsReferences"]["nodes"])),
+        }
+
+        return cls(**kwargs)
+
 
 @dataclasses.dataclass(slots=True)
 class PR(Base):
@@ -663,20 +694,7 @@ class PR(Base):
 
     def close(self) -> None:
         try:
-            if self.ci.is_running():
-                logging.info("Cancelling CI buildId %d", self.ci.build_id)
-                resp = http_request(
-                    url=AZP_BUILD_URL_FMT % self.ci.build_id,
-                    method="PATCH",
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": "Basic {}".format(
-                            base64.b64encode(f":{azp_token}".encode()).decode()
-                        ),
-                    },
-                    data=json.dumps({"status": "Cancelling"}),
-                )
-                logging.info("Cancelled with status_code: %d", resp.status_code)
+            self.ci.cancel()
         finally:
             logging.info("Closing PR #%d", self.number)
             query = """
@@ -697,6 +715,109 @@ class PR(Base):
                 }
             )
 
+    @classmethod
+    def fetch(cls, number: int, updated_at: datetime.datetime | None = None) -> t.Self:
+        logging.info("Getting PR #%d", number)
+        resp = send_query({"query": QUERY_SINGLE_PR, "variables": {"number": number}})
+        data = resp.json()["data"]
+        logging.info(ratelimit_to_str(data["rateLimit"]))
+        o = data["repository"]["pullRequest"]
+        if o is None:
+            raise ValueError(f"{number} not found")
+
+        kwargs = {
+            "id": o["id"],
+            "author": o["author"]["login"] if o["author"] else "ghost",
+            "number": o["number"],
+            "title": o["title"],
+            "body": o["body"],
+            "url": o["url"],
+            "events": process_events(o),
+            "labels": {
+                node["name"]: node["id"] for node in o["labels"].get("nodes", [])
+            },
+            "updated_at": updated_at,
+            "components": [],
+            "last_triaged_at": None,
+            "created_at": datetime.datetime.fromisoformat(o["createdAt"]),
+            "branch": o["baseRef"]["name"],
+            "files": [f["path"] for f in o["files"]["nodes"]],
+            "mergeable": o["mergeable"].lower(),
+        }
+        reviews = {}
+        for review in reversed(o["reviews"]["nodes"]):
+            if review["isMinimized"]:
+                continue
+            if (author := review["author"]["login"]) not in reviews:
+                reviews[author] = review["state"].lower()
+        kwargs["changes_requested"] = "changes_requested" in reviews.values()
+        kwargs["last_reviewed_at"] = max(
+            (r["updatedAt"] for r in o["reviews"]["nodes"]), default=None
+        )
+        if kwargs["last_reviewed_at"]:
+            kwargs["last_reviewed_at"] = datetime.datetime.fromisoformat(
+                kwargs["last_reviewed_at"]
+            )
+        last_commit = o["last_commit"]["nodes"][0]["commit"]
+        kwargs["last_committed_at"] = kwargs["pushed_at"] = (
+            datetime.datetime.fromisoformat(last_commit["committedDate"])
+        )
+
+        check_run = None
+        non_azp_failures = False
+        for cs in last_commit["checkSuites"]["nodes"]:
+            if cs.get("app", {}).get("name") == "Azure Pipelines":
+                check_run = cs["checkRuns"]["nodes"][0]
+            else:
+                non_azp_failures |= (
+                    cs["checkRuns"]["nodes"][0]["conclusion"].lower() != "success"
+                )
+
+        if (
+            check_run
+            and (
+                (conclusion := (check_run["conclusion"] or "").lower())
+                != "action_required"
+            )
+            and (azp_match := AZP_BUILD_ID_RE.search(check_run["detailsUrl"]))
+        ):
+            build_id = int(azp_match.group("buildId"))
+            started_at = datetime.datetime.fromisoformat(check_run["startedAt"])
+            if check_run["name"] == "CI":
+                try:
+                    completed_at = datetime.datetime.fromisoformat(
+                        check_run["completedAt"]
+                    )
+                except TypeError:
+                    completed_at = None
+                kwargs["ci"] = CI(
+                    build_id=build_id,
+                    completed=check_run["status"].lower() == "completed",
+                    passed=conclusion == "success",
+                    cancelled=conclusion == "canceled",
+                    completed_at=completed_at,
+                    started_at=started_at,
+                    non_azp_failures=non_azp_failures,
+                )
+            else:
+                kwargs["ci"] = CI(
+                    build_id=build_id,
+                    started_at=started_at,
+                )
+        else:
+            kwargs["ci"] = CI()
+
+        if status_check := last_commit.get("statusCheckRollup", {}):
+            kwargs["ci"].pending = status_check.get("state", "").lower() == "pending"
+
+        repo = o["headRepository"]
+        kwargs["from_repo"] = (
+            f"{repo['owner']['login']}/{repo['name']}" if repo else "ghost/ghost"
+        )
+        kwargs["has_issue"] = len(o["closingIssuesReferences"]["nodes"]) > 0
+
+        return cls(**kwargs)
+
 
 @dataclasses.dataclass(slots=True)
 class CI:
@@ -711,6 +832,22 @@ class CI:
 
     def is_running(self) -> bool:
         return self.build_id is not None and not self.completed
+
+    def cancel(self) -> None:
+        if self.is_running():
+            logging.info("Cancelling CI buildId %d", self.build_id)
+            resp = http_request(
+                url=AZP_BUILD_URL_FMT % self.build_id,
+                method="PATCH",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "Basic {}".format(
+                        base64.b64encode(f":{azp_token}".encode()).decode()
+                    ),
+                },
+                data=json.dumps({"status": "Cancelling"}),
+            )
+            logging.info("Cancelled with status_code: %d", resp.status_code)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -730,7 +867,7 @@ class Actions:
         return bool(self.to_label or self.to_unlabel or self.comments or self.close)
 
 
-GH_OBJ = t.TypeVar("GH_OBJ", Issue, PR)
+type GH_OBJ = Issue | PR
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1934,7 +2071,7 @@ def get_gh_objects(
 def get_issues(q: queue.SimpleQueue):
     try:
         for issue in get_gh_objects("issues", QUERY_ISSUE_NUMBERS):
-            q.put((issue, fetch_issue))
+            q.put((issue, Issue.fetch))
     except Exception as e:
         logging.exception(e)
     finally:
@@ -1944,136 +2081,11 @@ def get_issues(q: queue.SimpleQueue):
 def get_prs(q: queue.SimpleQueue):
     try:
         for pr in get_gh_objects("pullRequests", QUERY_PR_NUMBERS):
-            q.put((pr, fetch_pr))
+            q.put((pr, PR.fetch))
     except Exception as e:
         logging.exception(e)
     finally:
         q.put(...)
-
-
-def fetch_object(
-    number: int,
-    obj: t.Type[GH_OBJ],
-    object_name: t.Literal["issue", "pullRequest"],
-    query: str,
-    updated_at: datetime.datetime | None = None,
-) -> GH_OBJ:
-    logging.info("Getting %s #%d", object_name, number)
-    resp = send_query({"query": query, "variables": {"number": number}})
-    data = resp.json()["data"]
-    logging.info(ratelimit_to_str(data["rateLimit"]))
-    o = data["repository"][object_name]
-    if o is None:
-        raise ValueError(f"{number} not found")
-
-    kwargs = {
-        "id": o["id"],
-        "author": o["author"]["login"] if o["author"] else "ghost",
-        "number": o["number"],
-        "title": o["title"],
-        "body": o["body"],
-        "url": o["url"],
-        "events": process_events(o),
-        "labels": {node["name"]: node["id"] for node in o["labels"].get("nodes", [])},
-        "updated_at": updated_at,
-        "components": [],
-        "last_triaged_at": None,
-    }
-    if object_name == "issue":
-        kwargs["has_pr"] = bool(len(o["closedByPullRequestsReferences"]["nodes"]))
-    elif object_name == "pullRequest":
-        kwargs["created_at"] = datetime.datetime.fromisoformat(o["createdAt"])
-        kwargs["branch"] = o["baseRef"]["name"]
-        kwargs["files"] = [f["path"] for f in o["files"]["nodes"]]
-        kwargs["mergeable"] = o["mergeable"].lower()
-        reviews = {}
-        for review in reversed(o["reviews"]["nodes"]):
-            if review["isMinimized"]:
-                continue
-            if (author := review["author"]["login"]) not in reviews:
-                reviews[author] = review["state"].lower()
-        kwargs["changes_requested"] = "changes_requested" in reviews.values()
-        kwargs["last_reviewed_at"] = max(
-            (r["updatedAt"] for r in o["reviews"]["nodes"]), default=None
-        )
-        if kwargs["last_reviewed_at"]:
-            kwargs["last_reviewed_at"] = datetime.datetime.fromisoformat(
-                kwargs["last_reviewed_at"]
-            )
-        last_commit = o["last_commit"]["nodes"][0]["commit"]
-        kwargs["last_committed_at"] = kwargs["pushed_at"] = (
-            datetime.datetime.fromisoformat(last_commit["committedDate"])
-        )
-
-        check_run = None
-        non_azp_failures = False
-        for cs in last_commit["checkSuites"]["nodes"]:
-            if cs.get("app", {}).get("name") == "Azure Pipelines":
-                check_run = cs["checkRuns"]["nodes"][0]
-            else:
-                non_azp_failures |= (
-                    cs["checkRuns"]["nodes"][0]["conclusion"].lower() != "success"
-                )
-
-        if (
-            check_run
-            and (
-                (conclusion := (check_run["conclusion"] or "").lower())
-                != "action_required"
-            )
-            and (azp_match := AZP_BUILD_ID_RE.search(check_run["detailsUrl"]))
-        ):
-            build_id = int(azp_match.group("buildId"))
-            started_at = datetime.datetime.fromisoformat(check_run["startedAt"])
-            if check_run["name"] == "CI":
-                try:
-                    completed_at = datetime.datetime.fromisoformat(
-                        check_run["completedAt"]
-                    )
-                except TypeError:
-                    completed_at = None
-                kwargs["ci"] = CI(
-                    build_id=build_id,
-                    completed=check_run["status"].lower() == "completed",
-                    passed=conclusion == "success",
-                    cancelled=conclusion == "canceled",
-                    completed_at=completed_at,
-                    started_at=started_at,
-                    non_azp_failures=non_azp_failures,
-                )
-            else:
-                kwargs["ci"] = CI(
-                    build_id=build_id,
-                    started_at=started_at,
-                )
-        else:
-            kwargs["ci"] = CI()
-
-        if status_check := last_commit.get("statusCheckRollup", {}):
-            kwargs["ci"].pending = status_check.get("state", "").lower() == "pending"
-
-        repo = o["headRepository"]
-        kwargs["from_repo"] = (
-            f"{repo['owner']['login']}/{repo['name']}" if repo else "ghost/ghost"
-        )
-        kwargs["has_issue"] = len(o["closingIssuesReferences"]["nodes"]) > 0
-
-    return obj(**kwargs)
-
-
-def fetch_issue(number: int, updated_at: datetime.datetime | None = None) -> Issue:
-    return fetch_object(number, Issue, "issue", QUERY_SINGLE_ISSUE, updated_at)
-
-
-def fetch_pr(number: int, updated_at: datetime.datetime | None = None) -> PR:
-    return fetch_object(number, PR, "pullRequest", QUERY_SINGLE_PR, updated_at)
-
-
-def fetch_object_by_number(number: int) -> Issue | PR:
-    try:
-        return fetch_issue(number)
-    except ValueError:
-        return fetch_pr(number)
 
 
 def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ, None, None]:
@@ -2250,8 +2262,14 @@ def main() -> None:
         sys.exit(1)
 
     if args.number:
+        obj: GH_OBJ
+        try:
+            obj = Issue.fetch(args.number)
+        except ValueError:
+            obj = PR.fetch(args.number)
+
         triage(
-            fetch_object_by_number(args.number),
+            obj,
             TriageContext.fetch(),
             dry_run=args.dry_run,
             ask=args.ask,
