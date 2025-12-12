@@ -36,7 +36,7 @@ import urllib.request
 import zipfile
 
 try:
-    import sentry_sdk
+    import sentry_sdk  # type: ignore[import-not-found]
 except ImportError:
     sentry_sdk = None
 
@@ -534,16 +534,9 @@ class Base:
         last_applied = max(applied, default=None)
         last_removed = max(removed, default=None)
 
-        if last_applied and last_removed is None:
-            return True
-        elif last_applied is None and last_removed:
-            logging.warning("'%s' removed without being applied?", name)
-        elif last_applied is None and last_removed is None:
-            return False
-        elif last_applied > last_removed:
-            return True
-
-        return False
+        return last_applied is not None and (
+            last_removed is None or last_applied > last_removed
+        )
 
     def add_labels(self, labels: list[str], ctx: TriageContext) -> None:
         if not (
@@ -963,6 +956,7 @@ def http_request(
         headers = {}
 
     wait_seconds = 10
+    exc: Exception = AssertionError("Unexpected error during retrying http request")
     for i in range(retries):
         try:
             global _http_request_counter
@@ -994,6 +988,7 @@ def http_request(
                     raw_data=response.read(),
                 )
         except urllib.error.HTTPError as e:
+            exc = e
             logging.info(e)
             if e.status is not None and e.status >= 500:
                 if i < retries - 1:
@@ -1002,8 +997,6 @@ def http_request(
                         wait_seconds,
                     )
                     time.sleep(wait_seconds)
-                else:
-                    raise
             else:
                 return Response(
                     status_code=e.status,
@@ -1011,14 +1004,15 @@ def http_request(
                     raw_data=b"",
                 )
         except (TimeoutError, urllib.error.URLError) as e:
+            exc = e
             logging.info(e)
             if i < retries - 1:
                 logging.info(
                     "Waiting for %d seconds and retrying the request...", wait_seconds
                 )
                 time.sleep(wait_seconds)
-            else:
-                raise
+
+    raise exc
 
 
 def send_query(data: dict[str, t.Any]) -> Response:
