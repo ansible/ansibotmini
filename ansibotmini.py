@@ -294,7 +294,7 @@ query($number: Int!)
           name
         }
       }
-      timelineItems(first: 200, itemTypes: [ISSUE_COMMENT, LABELED_EVENT, UNLABELED_EVENT]) {
+      timelineItems(first: 200, itemTypes: [ISSUE_COMMENT, LABELED_EVENT, UNLABELED_EVENT, REOPENED_EVENT]) {
         pageInfo {
             endCursor
             hasNextPage
@@ -326,6 +326,9 @@ query($number: Int!)
             label {
               name
             }
+          }
+          ... on ReopenedEvent {
+            createdAt
           }
         }
       }
@@ -456,6 +459,9 @@ class Base:
             for e in self.events
             if isinstance(e, LabeledEvent) and e.label in ("needs_triage", "triage")
         )
+
+    def was_reopened(self) -> bool:
+        return any(e for e in self.events if isinstance(e, ReopenedEvent))
 
     def was_labeled_by_human(self, label_name: str) -> bool:
         return any(
@@ -1227,9 +1233,9 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
                     )
 
         post_comments_banner = True
-        if (
-            not existing_components
-            and "!needs_collection_redirect" not in obj.commands_found
+        if not existing_components and (
+            "!needs_collection_redirect" not in obj.commands_found
+            and not obj.was_reopened()
         ):
             if entries := is_in_collection(processed_components, ctx):
                 assembled_entries = []
@@ -1965,6 +1971,10 @@ class Event:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class ReopenedEvent(Event): ...
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class LabeledEvent(Event):
     label: str
     author: str
@@ -2018,6 +2028,12 @@ def process_events(issue: dict[str, t.Any]) -> list[Event]:
                             if node["author"] is not None
                             else ""
                         ),
+                    )
+                )
+            case "ReopenedEvent":
+                rv.append(
+                    ReopenedEvent(
+                        created_at=created_at,
                     )
                 )
 
