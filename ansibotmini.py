@@ -7,7 +7,6 @@ from __future__ import annotations
 import argparse
 import base64
 import collections
-import concurrent.futures
 import configparser
 import dataclasses
 import datetime
@@ -21,13 +20,11 @@ import logging.handlers
 import os.path
 import pickle
 import pprint
-import queue
 import re
 import string
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import typing as t
 import urllib.error
@@ -418,7 +415,6 @@ closingIssuesReferences(last: 1) {
 """,
 )
 
-_http_request_lock = threading.Lock()
 _http_request_counter = 0
 
 
@@ -966,12 +962,10 @@ def http_request(
     for i in range(retries):
         try:
             global _http_request_counter
-            with _http_request_lock:
-                _http_request_counter += 1
-                counter_value = _http_request_counter
+            _http_request_counter += 1
             logging.info(
                 "http request no. %d: %s %s",
-                counter_value,
+                _http_request_counter,
                 method,
                 url,
             )
@@ -2044,73 +2038,31 @@ def ratelimit_to_str(rate_limit: dict[str, t.Any]) -> str:
     return f"cost: {rate_limit['cost']}, {rate_limit['remaining']}/{rate_limit['limit']} until {rate_limit['resetAt']}"
 
 
-def get_gh_objects(
-    obj_name: str, query: str
-) -> t.Generator[tuple[int, datetime.datetime], None, None]:
-    variables: dict[str, t.Any] = {}
-    while True:
-        logging.info("Getting open %s", obj_name)
-        resp = send_query({"query": query, "variables": variables})
-        data = resp.json()["data"]
-        logging.info(ratelimit_to_str(data["rateLimit"]))
+def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
+    open_numbers: list[int] = []
+    for obj_name, query, fetch_func in (
+        ("issues", QUERY_ISSUE_NUMBERS, Issue.fetch),
+        ("pullRequests", QUERY_PR_NUMBERS, PR.fetch),
+    ):
+        variables: dict[str, t.Any] = {}
+        while True:
+            logging.info("Getting open %s", obj_name)
+            resp = send_query({"query": query, "variables": variables})
+            data = resp.json()["data"]
+            logging.info(ratelimit_to_str(data["rateLimit"]))
 
-        objs = data["repository"][obj_name]
-        for node in objs["nodes"]:
-            updated_ats = [
-                node["updatedAt"],
-                node["timelineItems"]["updatedAt"],
-            ]
-            if obj_name == "pullRequests":
-                last_commit = node["commits"]["nodes"][0]["commit"]
-                if ci_results := last_commit["checkSuites"]["nodes"]:
-                    updated_ats.append(ci_results[0]["updatedAt"])
-            yield (
-                node["number"],
-                max(map(datetime.datetime.fromisoformat, updated_ats)),
-            )
-
-        if objs["pageInfo"]["hasNextPage"]:
-            variables["after"] = objs["pageInfo"]["endCursor"]
-        else:
-            break
-
-
-def get_issues(q: queue.SimpleQueue):
-    try:
-        for issue in get_gh_objects("issues", QUERY_ISSUE_NUMBERS):
-            q.put((issue, Issue.fetch))
-    except Exception as e:
-        logging.exception(e)
-    finally:
-        q.put(...)
-
-
-def get_prs(q: queue.SimpleQueue):
-    try:
-        for pr in get_gh_objects("pullRequests", QUERY_PR_NUMBERS):
-            q.put((pr, PR.fetch))
-    except Exception as e:
-        logging.exception(e)
-    finally:
-        q.put(...)
-
-
-def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ, None, None]:
-    q: queue.SimpleQueue = queue.SimpleQueue()
-    workers = 2
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=workers, thread_name_prefix="WorkerThread"
-    ) as executor:
-        executor.submit(get_issues, q)
-        executor.submit(get_prs, q)
-        done = 0
-        open_numbers = []
-        while done < workers:
-            v = q.get()
-            if v is ...:
-                done += 1
-            else:
-                (number, updated_at), fetch_func = v
+            objs = data["repository"][obj_name]
+            for node in objs["nodes"]:
+                updated_ats = [
+                    node["updatedAt"],
+                    node["timelineItems"]["updatedAt"],
+                ]
+                if obj_name == "pullRequests":
+                    last_commit = node["commits"]["nodes"][0]["commit"]
+                    if ci_results := last_commit["checkSuites"]["nodes"]:
+                        updated_ats.append(ci_results[0]["updatedAt"])
+                number = node["number"]
+                updated_at = max(map(datetime.datetime.fromisoformat, updated_ats))
                 open_numbers.append(number)
                 if (
                     (o := cache.get(number, None)) is None
@@ -2120,8 +2072,13 @@ def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ, None, Non
                 ):
                     yield fetch_func(number, updated_at)
 
-        for number in cache.keys() - open_numbers:
-            cache.pop(number)
+            if objs["pageInfo"]["hasNextPage"]:
+                variables["after"] = objs["pageInfo"]["endCursor"]
+            else:
+                break
+
+    for number in cache.keys() - open_numbers:
+        cache.pop(number)
 
 
 def daemon(
@@ -2228,7 +2185,7 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(
-        format="%(asctime)s %(levelname)s:%(name)s:%(threadName)s: %(message)s",
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
         level=logging.INFO,
         handlers=[
             logging.handlers.RotatingFileHandler(
