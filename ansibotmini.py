@@ -21,6 +21,7 @@ import os.path
 import pickle
 import pprint
 import re
+import signal
 import string
 import subprocess
 import sys
@@ -414,6 +415,14 @@ closingIssuesReferences(last: 1) {
 }
 """,
 )
+
+
+class TermInterrupt(Exception): ...
+
+
+def sigterm_handler(signum, frame):
+    raise TermInterrupt
+
 
 _http_request_counter = 0
 
@@ -2165,6 +2174,8 @@ gh_token = azp_token = None
 def main() -> None:
     global gh_token, azp_token
 
+    signal.signal(signal.SIGTERM, sigterm_handler)
+
     parser = argparse.ArgumentParser(
         prog="ansibotmini",
         description=(
@@ -2262,7 +2273,7 @@ def main() -> None:
                 ask=args.ask,
                 ignore_bot_skip=args.ignore_bot_skip,
             )
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, TermInterrupt):
             print("Bye")
             sys.exit(0)
         except Exception as e:
