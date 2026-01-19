@@ -540,7 +540,8 @@ class Base:
             last_removed is None or last_applied > last_removed
         )
 
-    def add_labels(self, labels: list[str], ctx: TriageContext) -> None:
+    def add_labels(self, labels: list[str]) -> None:
+        ctx = TriageContext.get()
         if not (
             label_ids := [
                 ctx.labels_to_ids_map.get(label, get_label_id(label))
@@ -865,16 +866,29 @@ type GH_OBJ = Issue | PR
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class TriageContext:
-    collections_list: dict[str, t.Any] | None
-    collections_file_map: dict[str, t.Any] | None
-    committers: list[str]
-    devel_file_list: list[str]
-    v29_file_list: list[str]
-    v29_flatten_modules: list[str]
-    collections_to_redirect: list[str]
-    labels_to_ids_map: dict[str, str]
-    oldest_supported_bugfix_version: tuple[int, int]
-    updated_at: datetime.datetime
+    collections_list: dict[str, t.Any] | None = None
+    collections_file_map: dict[str, t.Any] | None = None
+    committers: list[str] = dataclasses.field(default_factory=list)
+    devel_file_list: list[str] = dataclasses.field(default_factory=list)
+    v29_file_list: list[str] = dataclasses.field(default_factory=list)
+    v29_flatten_modules: list[str] = dataclasses.field(default_factory=list)
+    collections_to_redirect: list[str] = dataclasses.field(default_factory=list)
+    labels_to_ids_map: dict[str, str] = dataclasses.field(default_factory=dict)
+    oldest_supported_bugfix_version: tuple[int, int] = (0, 0)
+    updated_at: datetime.datetime = datetime.datetime(
+        1970, 1, 1, tzinfo=datetime.timezone.utc
+    )
+
+    _current: t.ClassVar[TriageContext]
+
+    @classmethod
+    def get(cls) -> TriageContext:
+        if days_since(cls._current.updated_at) >= 2:
+            logging.info(
+                "Triage context is stale (more than 2 days old), fetching new data..."
+            )
+            cls._current = TriageContext.fetch()
+        return cls._current
 
     @classmethod
     def fetch(cls) -> t.Self:
@@ -922,6 +936,9 @@ class TriageContext:
             labels_to_ids_map={n: get_label_id(n) for n in VALID_LABELS},
             updated_at=datetime.datetime.now(datetime.timezone.utc),
         )
+
+
+TriageContext._current = TriageContext()
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1185,7 +1202,8 @@ def days_since(when: datetime.datetime) -> int:
     return (datetime.datetime.now(datetime.timezone.utc) - when).days
 
 
-def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def match_components(obj: GH_OBJ, actions: Actions) -> None:
+    ctx = TriageContext.get()
     existing_components = []
     if isinstance(obj, PR):
         # for old PRs that still touch unflatten modules
@@ -1231,7 +1249,7 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             "!needs_collection_redirect" not in obj.commands_found
             and not obj.was_reopened()
         ):
-            if entries := is_in_collection(processed_components, ctx):
+            if entries := is_in_collection(processed_components):
                 assembled_entries = []
                 for component, fqcns in entries.items():
                     for fqcn in fqcns:
@@ -1298,7 +1316,8 @@ def match_components(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     )
 
 
-def is_in_collection(components: list[str], ctx: TriageContext) -> dict[str, set[str]]:
+def is_in_collection(components: list[str]) -> dict[str, set[str]]:
+    ctx = TriageContext.get()
     if ctx.collections_list is None or ctx.collections_file_map is None:
         return {}
 
@@ -1350,12 +1369,12 @@ def is_in_collection(components: list[str], ctx: TriageContext) -> dict[str, set
     return entries
 
 
-def needs_triage(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def needs_triage(obj: GH_OBJ, actions: Actions) -> None:
     if obj.is_new():
         actions.to_label.append("needs_triage")
 
 
-def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def waiting_on_contributor(obj: GH_OBJ, actions: Actions) -> None:
     if (labeled_date := obj.last_labeled("waiting_on_contributor")) and (
         days_since(labeled_date) > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
     ):
@@ -1365,7 +1384,7 @@ def waiting_on_contributor(obj: GH_OBJ, actions: Actions, ctx: TriageContext) ->
         actions.comments.append(template_comment("waiting_on_contributor"))
 
 
-def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def needs_info(obj: GH_OBJ, actions: Actions) -> None:
     if needs_info_labeled_date := obj.last_labeled("needs_info"):
         needs_info_unlabeled_date = obj.last_unlabeled("needs_info")
         commented_datetime = obj.last_commented_by(obj.author)
@@ -1408,7 +1427,7 @@ def needs_info(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             actions.to_unlabel.append("needs_info")
 
 
-def match_object_type(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def match_object_type(obj: GH_OBJ, actions: Actions) -> None:
     if match := OBJ_TYPE_RE.search(obj.body):
         data = re.sub(r"~[^~]+~", "", match.group(1).lower()).lower()
         for m in re.findall(r"\b(feature|bug|test|bugfix)\b", data, flags=re.MULTILINE):
@@ -1417,7 +1436,7 @@ def match_object_type(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None
             actions.to_label.append(m)
 
 
-def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def match_version(obj: GH_OBJ, actions: Actions) -> None:
     if isinstance(obj, PR):
         return
     if match := VERSION_RE.search(obj.body):
@@ -1428,7 +1447,7 @@ def match_version(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             if (
                 obj.is_new()  # prevent spamming half the repo
                 and "bug" in actions.to_label
-                and version < ctx.oldest_supported_bugfix_version
+                and version < TriageContext.get().oldest_supported_bugfix_version
             ):
                 actions.comments.append(
                     template_comment(
@@ -1450,7 +1469,7 @@ def _sanitize_ci_comment(body: str) -> str:
     return f"{body[:max_comment_len - len(ommited_msg)]}{ommited_msg}"
 
 
-def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def ci_comments(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR) or obj.ci.completed_at is None:
         return
     resp = http_request(AZP_TIMELINE_URL_FMT % obj.ci.build_id)
@@ -1511,7 +1530,7 @@ def ci_comments(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_unlabel.append("ci_verified")
 
 
-def needs_revision(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def needs_revision(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR) or obj.ci.completed_at is None:
         return
     if (
@@ -1524,7 +1543,7 @@ def needs_revision(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_unlabel.append("needs_revision")
 
 
-def stale_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def stale_pr(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR):
         return
 
@@ -1534,7 +1553,7 @@ def stale_pr(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_unlabel.append("stale_pr")
 
 
-def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def needs_ci(obj: GH_OBJ, actions: Actions) -> None:
     if "stale_pr" in actions.to_label:
         actions.to_unlabel.append("needs_ci")
         return
@@ -1576,7 +1595,7 @@ def needs_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_unlabel.append("pre_azp")
 
 
-def stale_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def stale_ci(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR) or obj.ci.completed_at is None:
         return
     if days_since(obj.ci.completed_at) > STALE_CI_DAYS:
@@ -1585,7 +1604,7 @@ def stale_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_unlabel.append("stale_ci")
 
 
-def pending_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def pending_ci(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR):
         return
 
@@ -1599,7 +1618,7 @@ def pending_ci(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_unlabel.append("pending_ci")
 
 
-def backport(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def backport(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR):
         return
     if obj.branch.startswith("stable-"):
@@ -1608,14 +1627,14 @@ def backport(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_unlabel.append("backport")
 
 
-def is_module(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def is_module(obj: GH_OBJ, actions: Actions) -> None:
     if any(c.startswith("lib/ansible/modules/") for c in obj.components):
         actions.to_label.append("module")
     else:
         actions.to_unlabel.append("module")
 
 
-def needs_rebase(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def needs_rebase(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR):
         return
     # https://docs.github.com/en/graphql/reference/enums#mergeablestate
@@ -1630,7 +1649,7 @@ def needs_rebase(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             raise AssertionError(f"Unexpected mergeable value: '{obj.mergeable}'")
 
 
-def stale_review(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def stale_review(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR) or obj.last_reviewed_at is None:
         return
     if obj.last_reviewed_at < obj.last_committed_at:
@@ -1639,7 +1658,7 @@ def stale_review(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
         actions.to_unlabel.append("stale_review")
 
 
-def pr_from_upstream(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def pr_from_upstream(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR) or obj.from_repo != "ansible/ansible":
         return
     actions.close = True
@@ -1648,7 +1667,7 @@ def pr_from_upstream(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
     )
 
 
-def linked_objs(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def linked_objs(obj: GH_OBJ, actions: Actions) -> None:
     if isinstance(obj, PR):
         if obj.has_issue:
             actions.to_label.append("has_issue")
@@ -1661,8 +1680,8 @@ def linked_objs(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             actions.to_unlabel.append("has_pr")
 
 
-def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
-    if isinstance(obj, PR) or obj.author in ctx.committers:
+def needs_template(obj: GH_OBJ, actions: Actions) -> None:
+    if isinstance(obj, PR) or obj.author in TriageContext.get().committers:
         return
     missing = []
     if "bug" in actions.to_label:
@@ -1707,7 +1726,8 @@ def needs_template(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
             actions.to_unlabel.append("needs_info")
 
 
-def test_support_plugin(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def test_support_plugin(obj: GH_OBJ, actions: Actions) -> None:
+    ctx = TriageContext.get()
     if not isinstance(obj, PR) or ctx.collections_file_map is None:
         return
 
@@ -1742,7 +1762,7 @@ def test_support_plugin(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> No
         )
 
 
-def networking(obj: GH_OBJ, actions: Actions, ctx: TriageContext) -> None:
+def networking(obj: GH_OBJ, actions: Actions) -> None:
     if any(
         any(c.startswith(n) for n in NETWORK_PLUGIN_TYPE_DIRS) or c in NETWORK_FILES
         for c in obj.components
@@ -1830,7 +1850,6 @@ def get_oldest_supported_bugfix_version() -> tuple[int, int]:
 
 def triage(
     obj: GH_OBJ,
-    ctx: TriageContext,
     dry_run: bool = False,
     ask: bool = False,
     ignore_bot_skip: bool = False,
@@ -1847,6 +1866,7 @@ def triage(
             if isinstance(e, IssueCommentEvent)
         ),
     )
+    ctx = TriageContext.get()
     obj.commands_found = collections.defaultdict(list)
     for author, body, updated_at in bodies:
         for command in COMMANDS_RE.findall(body):
@@ -1870,7 +1890,7 @@ def triage(
                 obj.number,
             )
             if not dry_run:
-                obj.add_labels(["bot_broken"], ctx)
+                obj.add_labels(["bot_broken"])
             return
         if not dry_run:
             obj.remove_labels(["bot_broken"])
@@ -1887,7 +1907,7 @@ def triage(
     # triage
     actions = Actions()
     for f in bot_funcs:
-        f(obj, actions, ctx)
+        f(obj, actions)
         if not dry_run and actions.close:
             # short-circuit the rest of the triage to avoid posting
             # information that would be irrelevant after closing
@@ -1939,7 +1959,7 @@ def triage(
 
             if take_actions:
                 if actions.to_label:
-                    obj.add_labels(actions.to_label, ctx)
+                    obj.add_labels(actions.to_label)
                 if actions.to_unlabel:
                     obj.remove_labels(actions.to_unlabel)
 
@@ -2087,6 +2107,7 @@ def daemon(
     ask: bool = False,
     ignore_bot_skip: bool = False,
 ) -> None:
+    global _http_request_counter
     cache: dict[int, CacheEntry] = {}
     try:
         with open(CACHE_FILENAME, "rb") as cf:
@@ -2094,15 +2115,10 @@ def daemon(
     except (OSError, EOFError) as e:
         logging.info("Could not use cache: '%s'", e)
 
-    ctx = TriageContext.fetch()
     while True:
         logging.info("Starting triage")
-        global _http_request_counter
         _http_request_counter = 0
         start = time.time()
-        if days_since(ctx.updated_at) >= 2:
-            ctx = TriageContext.fetch()
-
         n = 0
         try:
             for n, obj in enumerate(fetch_objects(cache), 1):
@@ -2116,7 +2132,7 @@ def daemon(
                         obj.pushed_at = cached_obj.pushed_at
 
                 try:
-                    triage(obj, ctx, dry_run, ask, ignore_bot_skip)
+                    triage(obj, dry_run, ask, ignore_bot_skip)
                 except TriageNextTime as e:
                     logging.warning(e)
                 else:
@@ -2234,7 +2250,6 @@ def main() -> None:
 
         triage(
             obj,
-            TriageContext.fetch(),
             dry_run=args.dry_run,
             ask=args.ask,
             ignore_bot_skip=args.ignore_bot_skip,
