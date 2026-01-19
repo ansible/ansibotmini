@@ -16,7 +16,6 @@ import io
 import itertools
 import json
 import logging
-import logging.handlers
 import os.path
 import pickle
 import pprint
@@ -90,7 +89,6 @@ SLEEP_SECONDS = 300
 CONFIG_FILENAME = os.path.expanduser("~/.ansibotmini.cfg")
 CACHE_FILENAME = os.path.expanduser("~/.ansibotmini_cache.pickle")
 BYFILE_PAGE_FILENAME = os.path.expanduser("~/byfile.html")
-LOG_FILENAME = os.path.expanduser("~/ansibotmini.log")
 
 COMPONENT_RE = re.compile(
     r"#{3,5}\scomponent\sname(.+?)(?=#{3,5}|$)", flags=re.IGNORECASE | re.DOTALL
@@ -2214,12 +2212,7 @@ def main() -> None:
     logging.basicConfig(
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         level=logging.INFO,
-        handlers=[
-            logging.handlers.RotatingFileHandler(
-                LOG_FILENAME, maxBytes=5 * 1024 * 1024, backupCount=3
-            ),
-            logging.StreamHandler(),
-        ],
+        handlers=[logging.StreamHandler(sys.stdout)],
     )
 
     config = configparser.ConfigParser()
