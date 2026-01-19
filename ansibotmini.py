@@ -85,6 +85,7 @@ NEEDS_INFO_WARN_DAYS = 14
 NEEDS_INFO_CLOSE_DAYS = 28
 WAITING_ON_CONTRIBUTOR_CLOSE_DAYS = 365
 SLEEP_SECONDS = 300
+NEVER = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
 
 CONFIG_FILENAME = os.path.expanduser("~/.ansibotmini.cfg")
 CACHE_FILENAME = os.path.expanduser("~/.ansibotmini_cache.pickle")
@@ -451,7 +452,7 @@ class Base:
     labels: dict[str, str]
     updated_at: datetime.datetime
     components: list[str]
-    last_triaged_at: datetime.datetime | None
+    last_triaged_at: datetime.datetime
     commands_found: dict[str, list[Command]] = dataclasses.field(
         init=False, default_factory=dict
     )
@@ -674,7 +675,7 @@ class Issue(Base):
             },
             "updated_at": updated_at,
             "components": [],
-            "last_triaged_at": None,
+            "last_triaged_at": NEVER,
             "has_pr": bool(len(o["closedByPullRequestsReferences"]["nodes"])),
         }
 
@@ -741,7 +742,7 @@ class PR(Base):
             },
             "updated_at": updated_at,
             "components": [],
-            "last_triaged_at": None,
+            "last_triaged_at": NEVER,
             "created_at": datetime.datetime.fromisoformat(o["createdAt"]),
             "branch": o["baseRef"]["name"],
             "files": [f["path"] for f in o["files"]["nodes"]],
@@ -882,9 +883,7 @@ class TriageContext:
     collections_to_redirect: list[str] = dataclasses.field(default_factory=list)
     labels_to_ids_map: dict[str, str] = dataclasses.field(default_factory=dict)
     oldest_supported_bugfix_version: tuple[int, int] = (0, 0)
-    updated_at: datetime.datetime = datetime.datetime(
-        1970, 1, 1, tzinfo=datetime.timezone.utc
-    )
+    updated_at: datetime.datetime = NEVER
 
     _current: t.ClassVar[TriageContext]
 
@@ -2093,7 +2092,6 @@ def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
                 open_numbers.append(number)
                 if (
                     (o := cache.get(number, None)) is None
-                    or o.last_triaged_at is None
                     or o.last_triaged_at < updated_at
                     or days_since(o.last_triaged_at) >= STALE_ISSUE_DAYS
                 ):
