@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 
@@ -6,7 +7,6 @@ import pytest
 from ansibotmini import is_in_collection, TriageContext
 
 
-@pytest.fixture
 def ctx():
     with open(os.path.join(os.path.dirname(__file__), "data/collections_list")) as f:
         collections_list = json.load(f)
@@ -37,7 +37,7 @@ def ctx():
         ],
         oldest_supported_bugfix_version=[],
         labels_to_ids_map={},
-        updated_at=None,
+        updated_at=datetime.datetime.now(datetime.timezone.utc),
     )
 
 
@@ -84,7 +84,8 @@ def ctx():
         ),
     ],
 )
-def test_collection_redirect(ctx, in_component, out_component, expected):
-    assert sorted(is_in_collection([in_component], ctx)[out_component]) == sorted(
+def test_collection_redirect(in_component, out_component, expected):
+    TriageContext._current = ctx()
+    assert sorted(is_in_collection([in_component])[out_component]) == sorted(
         expected
     )
