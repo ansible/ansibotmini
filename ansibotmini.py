@@ -1254,26 +1254,12 @@ def match_components(obj: GH_OBJ, actions: Actions) -> None:
         if not existing_components and (
             "!needs_collection_redirect" not in obj.commands_found
             and not obj.was_reopened()
+            and (comment := get_collection_redirection_comment(processed_components))
         ):
-            if entries := is_in_collection(processed_components):
-                assembled_entries = []
-                for component, fqcns in entries.items():
-                    for fqcn in fqcns:
-                        collection_info = ctx.collections_list[fqcn]["manifest"][
-                            "collection_info"
-                        ]
-                        assembled_entries.append(
-                            f"* {component} -> {collection_info['repository']} ({GALAXY_URL}{collection_info['namespace']}.{collection_info['name']})"
-                        )
-                actions.comments.append(
-                    template_comment(
-                        "collection_redirect",
-                        {"components": "\n".join(assembled_entries)},
-                    )
-                )
-                actions.to_label.append("bot_closed")
-                actions.close = True
-                post_comments_banner = False
+            actions.comments.append(comment)
+            actions.to_label.append("bot_closed")
+            actions.close = True
+            post_comments_banner = False
 
         if post_comments_banner:
             last_comment = obj.last_boilerplate("components_banner")
@@ -1327,7 +1313,7 @@ def is_in_collection(components: list[str]) -> dict[str, set[str]]:
     if ctx.collections_list is None or ctx.collections_file_map is None:
         return {}
 
-    entries = collections.defaultdict(set)
+    component_to_fqcns_map = collections.defaultdict(set)
 
     for component in components:
         parts = component.split(".")
@@ -1339,7 +1325,7 @@ def is_in_collection(components: list[str]) -> dict[str, set[str]]:
             case _:
                 continue
         if fqcn in ctx.collections_list and fqcn in ctx.collections_to_redirect:
-            entries[component].add(fqcn)
+            component_to_fqcns_map[component].add(fqcn)
 
     for component in components:
         if "/" not in component:
@@ -1351,8 +1337,8 @@ def is_in_collection(components: list[str]) -> dict[str, set[str]]:
         )
         for fqcn in ctx.collections_file_map.get(flatten, []):
             if fqcn in ctx.collections_to_redirect:
-                entries[flatten].add(fqcn)
-        if entries:
+                component_to_fqcns_map[flatten].add(fqcn)
+        if component_to_fqcns_map:
             break
     else:
         for component, plugin_type, ext in itertools.product(
@@ -1368,11 +1354,27 @@ def is_in_collection(components: list[str]) -> dict[str, set[str]]:
                             f"lib/ansible/modules/{component}.{ext}"
                             in ctx.v29_flatten_modules
                         ):
-                            entries[candidate].add(fqcn)
+                            component_to_fqcns_map[candidate].add(fqcn)
                     else:
                         if f"lib/ansible/{candidate}" in ctx.v29_file_list:
-                            entries[candidate].add(fqcn)
-    return entries
+                            component_to_fqcns_map[candidate].add(fqcn)
+    return component_to_fqcns_map
+
+
+def get_collection_redirection_comment(components: list[str]) -> str | None:
+    if not (component_to_fqcns_map := is_in_collection(components)):
+        return None
+
+    ctx = TriageContext.get()
+    if ctx.collections_list is None:
+        return None
+
+    lines = [
+        f"* {component} -> {ctx.collections_list[fqcn]["manifest"]["collection_info"]["repository"]} ({GALAXY_URL}{fqcn})"
+        for component, fqcns in component_to_fqcns_map.items()
+        for fqcn in fqcns
+    ]
+    return template_comment("collection_redirect", {"components": "\n".join(lines)})
 
 
 def needs_triage(obj: GH_OBJ, actions: Actions) -> None:
