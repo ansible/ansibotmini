@@ -832,11 +832,8 @@ class CI:
     non_azp_failures: bool = False
     pending: bool = False
 
-    def is_running(self) -> bool:
-        return self.build_id is not None and self.completed_at is None
-
     def cancel(self) -> None:
-        if self.is_running():
+        if self.build_id is not None and self.completed_at is None:
             logging.info("Cancelling CI buildId %d", self.build_id)
             resp = http_request(
                 url=AZP_BUILD_URL_FMT % self.build_id,
@@ -850,6 +847,17 @@ class CI:
                 data=json.dumps({"status": "Cancelling"}),
             )
             logging.info("Cancelled with status_code: %d", resp.status_code)
+
+    def is_long_running(self, *, hours: int) -> bool:
+        return (
+            self.build_id is not None
+            and self.completed_at is None
+            and self.started_at is not None
+            and (
+                datetime.datetime.now(datetime.timezone.utc) - self.started_at
+            ).total_seconds()
+            > hours * 60 * 60
+        )
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1569,7 +1577,9 @@ def needs_ci(obj: GH_OBJ, actions: Actions) -> None:
     if (
         not isinstance(obj, PR)
         or "needs_rebase" in actions.to_label
-        or (datetime.datetime.now(datetime.timezone.utc) - obj.created_at).seconds
+        or (
+            datetime.datetime.now(datetime.timezone.utc) - obj.created_at
+        ).total_seconds()
         < 5 * 60
     ):
         actions.to_unlabel.append("needs_ci")
@@ -1578,17 +1588,13 @@ def needs_ci(obj: GH_OBJ, actions: Actions) -> None:
     if (
         (
             obj.ci.build_id is None
-            and (datetime.datetime.now(datetime.timezone.utc) - obj.pushed_at).seconds
+            and (
+                datetime.datetime.now(datetime.timezone.utc) - obj.pushed_at
+            ).total_seconds()
             > 5 * 60
         )
         or obj.ci.cancelled
-        or (
-            obj.ci.is_running()
-            and (
-                datetime.datetime.now(datetime.timezone.utc) - obj.ci.started_at
-            ).seconds
-            > 2 * 60 * 60
-        )
+        or obj.ci.is_long_running(hours=2)
     ):
         if "pre_azp" not in obj.labels:
             actions.to_label.append("needs_ci")
@@ -1618,7 +1624,9 @@ def pending_ci(obj: GH_OBJ, actions: Actions) -> None:
 
     if (
         obj.ci.pending
-        and (datetime.datetime.now(datetime.timezone.utc) - obj.pushed_at).seconds
+        and (
+            datetime.datetime.now(datetime.timezone.utc) - obj.pushed_at
+        ).total_seconds()
         > 60 * 60  # wait one hour after last push to the PR before declaring "stuck CI"
     ):
         actions.to_label.append("pending_ci")
