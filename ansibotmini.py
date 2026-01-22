@@ -659,6 +659,15 @@ class Issue(Base):
             }
         )
 
+    def to_cache_entry(self) -> IssueCacheEntry:
+        return IssueCacheEntry(
+            title=self.title,
+            url=self.url,
+            components=self.components,
+            updated_at=self.updated_at,
+            last_triaged_at=self.last_triaged_at,
+        )
+
     @classmethod
     def fetch(cls, number: int, updated_at: datetime.datetime | None = None) -> t.Self:
         logging.info("Getting issue #%d", number)
@@ -727,6 +736,17 @@ class PR(Base):
                     },
                 }
             )
+
+    def to_cache_entry(self) -> PRCacheEntry:
+        return PRCacheEntry(
+            title=self.title,
+            url=self.url,
+            components=self.components,
+            updated_at=self.updated_at,
+            last_triaged_at=self.last_triaged_at,
+            last_committed_at=self.last_committed_at,
+            pushed_at=self.pushed_at,
+        )
 
     @classmethod
     def fetch(cls, number: int, updated_at: datetime.datetime | None = None) -> t.Self:
@@ -974,26 +994,21 @@ TriageContext._current = TriageContext()
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class CacheEntry:
+class IssueCacheEntry:
     title: str
     url: str
     components: list[str]
     updated_at: datetime.datetime
     last_triaged_at: datetime.datetime
-    last_committed_at: datetime.datetime | None
-    pushed_at: datetime.datetime | None
 
-    @classmethod
-    def from_obj(cls, obj: GH_OBJ):
-        return cls(
-            title=obj.title,
-            url=obj.url,
-            components=obj.components,
-            updated_at=obj.updated_at,
-            last_triaged_at=obj.last_triaged_at,
-            last_committed_at=getattr(obj, "last_committed_at", None),
-            pushed_at=getattr(obj, "pushed_at", None),
-        )
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class PRCacheEntry(IssueCacheEntry):
+    last_committed_at: datetime.datetime
+    pushed_at: datetime.datetime
+
+
+type CacheEntry = IssueCacheEntry | PRCacheEntry
 
 
 def http_request(
@@ -2170,7 +2185,7 @@ def daemon(
                 except TriageNextTime as e:
                     logging.warning(e)
                 else:
-                    cache[obj.number] = CacheEntry.from_obj(obj)
+                    cache[obj.number] = obj.to_cache_entry()
         finally:
             if n:
                 with tempfile.NamedTemporaryFile(dir=".", delete=False) as f:
