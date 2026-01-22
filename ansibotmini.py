@@ -291,7 +291,7 @@ query($number: Int!)
           name
         }
       }
-      timelineItems(first: 200, itemTypes: [ISSUE_COMMENT, LABELED_EVENT, UNLABELED_EVENT, REOPENED_EVENT]) {
+      timelineItems(first: 200, itemTypes: [ISSUE_COMMENT, LABELED_EVENT, UNLABELED_EVENT, REOPENED_EVENT%s]) {
         pageInfo {
             endCursor
             hasNextPage
@@ -327,6 +327,7 @@ query($number: Int!)
           ... on ReopenedEvent {
             createdAt
           }
+          %s
         }
       }
       %s
@@ -343,6 +344,8 @@ query($number: Int!)
 
 QUERY_SINGLE_ISSUE = QUERY_SINGLE_TMPL % (
     "issue",
+    "",
+    "",
     """
 closedByPullRequestsReferences(last: 1) {
   nodes {
@@ -354,6 +357,12 @@ closedByPullRequestsReferences(last: 1) {
 
 QUERY_SINGLE_PR = QUERY_SINGLE_TMPL % (
     "pullRequest",
+    ", HEAD_REF_FORCE_PUSHED_EVENT",
+    """
+    ... on HeadRefForcePushedEvent {
+      createdAt
+    }
+    """,
     """
 createdAt
 baseRef {
@@ -763,8 +772,17 @@ class PR(Base):
                 kwargs["last_reviewed_at"]
             )
         last_commit = o["last_commit"]["nodes"][0]["commit"]
-        kwargs["last_committed_at"] = kwargs["pushed_at"] = (
-            datetime.datetime.fromisoformat(last_commit["committedDate"])
+        kwargs["last_committed_at"] = datetime.datetime.fromisoformat(
+            last_commit["committedDate"]
+        )
+
+        kwargs["pushed_at"] = max(
+            [kwargs["last_committed_at"]]
+            + [
+                e.created_at
+                for e in kwargs["events"]
+                if isinstance(e, HeadRefForcePushedEvent)
+            ]
         )
 
         check_run = None
@@ -2005,6 +2023,10 @@ class ReopenedEvent(Event): ...
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class HeadRefForcePushedEvent(Event): ...
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class LabeledEvent(Event):
     label: str
     author: str
@@ -2063,6 +2085,12 @@ def process_events(issue: dict[str, t.Any]) -> list[Event]:
             case "ReopenedEvent":
                 rv.append(
                     ReopenedEvent(
+                        created_at=created_at,
+                    )
+                )
+            case "HeadRefForcePushedEvent":
+                rv.append(
+                    HeadRefForcePushedEvent(
                         created_at=created_at,
                     )
                 )
@@ -2137,15 +2165,6 @@ def daemon(
         n = 0
         try:
             for n, obj in enumerate(fetch_objects(cache), 1):
-                if (
-                    isinstance(obj, PR)
-                    and (cached_obj := cache.get(obj.number)) is not None
-                ):
-                    if obj.last_committed_at != cached_obj.last_committed_at:
-                        obj.pushed_at = datetime.datetime.now(datetime.timezone.utc)
-                    else:
-                        obj.pushed_at = cached_obj.pushed_at
-
                 try:
                     triage(obj, dry_run, ask, ignore_bot_skip)
                 except TriageNextTime as e:
