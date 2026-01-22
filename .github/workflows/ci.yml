@@ -1,4 +1,4 @@
-name: Pytest bot
+name: CI
 
 on:
   push:
@@ -10,13 +10,39 @@ on:
     - main
 
 jobs:
-  build:
+  black:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.13"
+      - name: Check formatting with black
+        run: |
+          pip install black
+          black --check --diff ansibotmini.py
 
+  mypy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.13"
+      - name: Type check with mypy
+        run: |
+          pip install mypy
+          mypy ansibotmini.py
+
+  test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.13", "3.14"]
-
+        python-version:
+          - "3.13"
+          - "3.14"
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -24,16 +50,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install flake8 pytest
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        run: pip install flake8 pytest
       - name: Lint with flake8
-        run: |
-          # stop the build if there are Python syntax errors or undefined names
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          # exit-zero treats all errors as warnings.
-          flake8 . --count --exit-zero --max-line-length=120 --statistics
+        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
       - name: Test with pytest
-        run: |
-          python -m pytest tests
+        run: python -m pytest tests
