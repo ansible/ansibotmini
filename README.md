@@ -103,7 +103,7 @@ $ python ansibotmini.py --help
 # triage specific issue or pull request
 $ python ansibotmini.py --number 10000
 
-# run the bot in a loop and triage all issues
+# triage all issues/PRs in a loop
 $ python ansibotmini.py
 ```
 

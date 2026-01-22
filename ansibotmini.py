@@ -1899,7 +1899,7 @@ def get_oldest_supported_bugfix_version() -> tuple[int, int]:
 
 def triage(
     obj: GH_OBJ,
-    dry_run: bool = False,
+    force: bool = False,
     ask: bool = False,
     ignore_bot_skip: bool = False,
 ) -> None:
@@ -1938,10 +1938,10 @@ def triage(
                 obj.title,
                 obj.number,
             )
-            if not dry_run:
+            if force:
                 obj.add_labels(["bot_broken"])
             return
-        if not dry_run:
+        if force:
             obj.remove_labels(["bot_broken"])
         if obj.is_command_applied("bot_skip"):
             obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
@@ -1957,7 +1957,7 @@ def triage(
     actions = Actions()
     for f in bot_funcs:
         f(obj, actions)
-        if not dry_run and actions.close:
+        if force and actions.close:
             # short-circuit the rest of the triage to avoid posting
             # information that would be irrelevant after closing
             break
@@ -1993,18 +1993,15 @@ def triage(
             f"The following labels were scheduled to be both added and removed {', '.join(common_labels)}"
         )
 
-    if dry_run:
-        logging.info("Skipping taking actions due to --dry-run")
-    else:
+    if force or ask:
         if actions:
             logging.info("Summary of actions to take:")
             logging.info(pprint.pformat(actions))
 
+            take_actions = True
             if ask:
                 user_input = input("Take actions? (y/n): ")
                 take_actions = user_input.strip() == "y"
-            else:
-                take_actions = True
 
             if take_actions:
                 if actions.to_label:
@@ -2018,9 +2015,11 @@ def triage(
                 if actions.close:
                     obj.close()
             else:
-                logging.info("Skipping taking actions")
+                logging.info("Skipping taking actions per user input")
         else:
             logging.info("No actions to take")
+    else:
+        logging.info("Skipping taking actions")
 
     obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
     logging.info(
@@ -2160,7 +2159,7 @@ def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
 
 
 def daemon(
-    dry_run: bool = False,
+    force: bool = False,
     generate_byfile: bool = False,
     ask: bool = False,
     ignore_bot_skip: bool = False,
@@ -2181,7 +2180,7 @@ def daemon(
         try:
             for n, obj in enumerate(fetch_objects(cache), 1):
                 try:
-                    triage(obj, dry_run, ask, ignore_bot_skip)
+                    triage(obj, force, ask, ignore_bot_skip)
                 except TriageNextTime as e:
                     logging.warning(e)
                 else:
@@ -2227,11 +2226,6 @@ def main() -> None:
         "--number", type=int, help="GitHub issue or pull request number"
     )
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="do not take any actions, just print what would have been done",
-    )
-    parser.add_argument(
         "--generate-byfile-page",
         action="store_true",
         help=(
@@ -2240,15 +2234,23 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--ask",
-        action="store_true",
-        help="stop and ask user before applying actions",
-    )
-    parser.add_argument(
         "--ignore-bot-skip",
         action="store_true",
         help="ignore bot_skip and bot_broken commands",
     )
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--ask",
+        action="store_true",
+        help="stop and ask user before applying actions",
+    )
+    group.add_argument(
+        "--force",
+        action="store_true",
+        help="automatically apply all actions",
+    )
+
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -2296,14 +2298,14 @@ def main() -> None:
 
         triage(
             obj,
-            dry_run=args.dry_run,
+            force=args.force,
             ask=args.ask,
             ignore_bot_skip=args.ignore_bot_skip,
         )
     else:
         try:
             daemon(
-                dry_run=args.dry_run,
+                force=args.force,
                 generate_byfile=args.generate_byfile_page,
                 ask=args.ask,
                 ignore_bot_skip=args.ignore_bot_skip,
