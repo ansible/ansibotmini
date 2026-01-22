@@ -2241,6 +2241,11 @@ def main() -> None:
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print actions, do not apply them, this is the default",
+    )
+    group.add_argument(
         "--ask",
         action="store_true",
         help="stop and ask user before applying actions",
