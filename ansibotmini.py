@@ -2126,7 +2126,12 @@ def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
         while True:
             logging.info("Getting open %s", obj_name)
             resp = send_query({"query": query, "variables": variables})
-            data = resp.json()["data"]
+            try:
+                data = resp.json()["data"]
+            except KeyError:
+                logging.info(resp.json())
+                logging.exception(f"Skipping triaging {obj_name}")
+                break
             logging.info(ratelimit_to_str(data["rateLimit"]))
 
             objs = data["repository"][obj_name]
