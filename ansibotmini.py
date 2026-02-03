@@ -1054,7 +1054,8 @@ def http_request(
         except urllib.error.HTTPError as e:
             exc = e
             logging.info(e)
-            if e.status is not None and e.status >= 500:
+            # NOTE it appears GitHub sometimes returns "401 Unauthorized" incorrectly?
+            if e.status is not None and (e.status >= 500 or e.status == 401):
                 if i < retries - 1:
                     logging.info(
                         "Waiting for %d seconds and retrying the request...",
@@ -1454,13 +1455,12 @@ def needs_info(obj: GH_OBJ, actions: Actions) -> None:
                     )
                 )
             elif days_labeled > NEEDS_INFO_WARN_DAYS:
-                last_warned = obj.last_boilerplate("needs_info_warn")
-                if last_warned is None:
-                    last_warned = obj.last_boilerplate("needs_info_base")
                 if (
-                    last_warned is None
-                    or last_warned.created_at < needs_info_labeled_date
-                ):
+                    last_warned := (
+                        obj.last_boilerplate("needs_info_warn")
+                        or obj.last_boilerplate("needs_info_base")
+                    )
+                ) is None or last_warned.created_at < needs_info_labeled_date:
                     actions.comments.append(
                         template_comment(
                             "needs_info_warn",
@@ -1711,6 +1711,7 @@ def pr_from_upstream(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR) or obj.from_repo != "ansible/ansible":
         return
     actions.close = True
+    actions.to_label.append("bot_closed")
     actions.comments.append(
         template_comment("pr_from_upstream", {"author": obj.author})
     )
