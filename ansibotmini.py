@@ -1540,9 +1540,10 @@ def ci_comments(obj: GH_OBJ, actions: Actions) -> None:
         return
     ci_comment = []
     ci_verifieds = []
+    artifacts_response = http_request(AZP_ARTIFACTS_URL_FMT % obj.ci.build_id).json()
     for url in (
         a["resource"]["downloadUrl"]
-        for a in http_request(AZP_ARTIFACTS_URL_FMT % obj.ci.build_id).json()["value"]
+        for a in artifacts_response.get("value", [])
         if a["name"].startswith("Bot ") and a["source"] in failed_job_ids
     ):
         zfile = zipfile.ZipFile(io.BytesIO(http_request(url).raw_data))
