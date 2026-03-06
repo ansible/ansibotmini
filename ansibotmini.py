@@ -435,8 +435,29 @@ def sigterm_handler(signum, frame):
 _http_request_counter = 0
 
 
+class AbortCurrentTriageAndWait(Exception):
+    """Abort the current triage run due to failures accumulated during the run likely due to the external services being down."""
+
+    wait_in_seconds = 15 * 60  # 15 minutes
+
+
 class TriageNextTime(Exception):
     """Skip triaging an issue/PR due to the bot not receiving complete data to continue. Try next time."""
+
+    failures: t.ClassVar[collections.deque[datetime.datetime]] = collections.deque(
+        maxlen=10
+    )
+
+    def __init__(self, msg: str) -> None:
+        super().__init__(msg)
+        now = datetime.datetime.now(tz=datetime.timezone.utc)
+        TriageNextTime.failures.append(now)
+
+        def in_last_five_minutes(dt: datetime.datetime) -> bool:
+            return (now - dt).total_seconds() <= 60 * 5
+
+        if sum((1 for dt in TriageNextTime.failures if in_last_five_minutes(dt))) >= 5:
+            raise AbortCurrentTriageAndWait
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -674,7 +695,14 @@ class Issue(Base):
         resp = send_query(
             {"query": QUERY_SINGLE_ISSUE, "variables": {"number": number}}
         )
-        data = resp.json()["data"]
+
+        try:
+            data = resp.json()["data"]
+        except KeyError:
+            raise TriageNextTime(
+                f"Skipping due to incomplete data received when fetching the issue, the response was: {resp!r}"
+            )
+
         logging.info(ratelimit_to_str(data["rateLimit"]))
         o = data["repository"]["issue"]
         if o is None:
@@ -752,7 +780,14 @@ class PR(Base):
     def fetch(cls, number: int, updated_at: datetime.datetime | None = None) -> t.Self:
         logging.info("Getting PR #%d", number)
         resp = send_query({"query": QUERY_SINGLE_PR, "variables": {"number": number}})
-        data = resp.json()["data"]
+
+        try:
+            data = resp.json()["data"]
+        except KeyError:
+            raise TriageNextTime(
+                f"Skipping due to incomplete data received when fetching the PR, the response was: {resp!r}"
+            )
+
         logging.info(ratelimit_to_str(data["rateLimit"]))
         o = data["repository"]["pullRequest"]
         if o is None:
@@ -1022,7 +1057,7 @@ def http_request(
         headers = {}
 
     wait_seconds = 10
-    exc: Exception = AssertionError("Unexpected error during retrying http request")
+    error_msg: str = "Unexpected error during retrying http request"
     for i in range(retries):
         try:
             global _http_request_counter
@@ -1052,7 +1087,7 @@ def http_request(
                     raw_data=response.read(),
                 )
         except urllib.error.HTTPError as e:
-            exc = e
+            error_msg = str(e)
             logging.info(e)
             # NOTE it appears GitHub sometimes returns "401 Unauthorized" incorrectly?
             if e.status is not None and (e.status >= 500 or e.status == 401):
@@ -1068,8 +1103,8 @@ def http_request(
                     reason=e.reason,
                     raw_data=b"",
                 )
-        except (TimeoutError, urllib.error.URLError) as e:
-            exc = e
+        except (ConnectionError, TimeoutError, urllib.error.URLError) as e:
+            error_msg = str(e)
             logging.info(e)
             if i < retries - 1:
                 logging.info(
@@ -1077,7 +1112,9 @@ def http_request(
                 )
                 time.sleep(wait_seconds)
 
-    raise exc
+    raise TriageNextTime(
+        f"Skipping due to an error sending a HTTP request to {url!r}, the error was {error_msg!r}"
+    )
 
 
 def send_query(data: dict[str, t.Any]) -> Response:
@@ -1091,8 +1128,8 @@ def send_query(data: dict[str, t.Any]) -> Response:
         data=json.dumps(data),
     )
 
-    if errors := resp.json().get("errors"):
-        raise ValueError(errors)
+    if resp.json().get("errors"):
+        raise TriageNextTime(f"Skipping due to an error in sending query: {resp!r}")
 
     return resp
 
@@ -2126,12 +2163,19 @@ def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
         variables: dict[str, t.Any] = {}
         while True:
             logging.info("Getting open %s", obj_name)
-            resp = send_query({"query": query, "variables": variables})
+            try:
+                resp = send_query({"query": query, "variables": variables})
+            except TriageNextTime as ex:
+                logging.warning(ex)
+                break
+
             try:
                 data = resp.json()["data"]
             except KeyError:
-                logging.info(resp.json())
-                logging.exception(f"Skipping triaging {obj_name}")
+                logging.warning(
+                    "Skipping triage due to incomplete data received when fetching data, the response was: '%s'",
+                    resp,
+                )
                 break
             logging.info(ratelimit_to_str(data["rateLimit"]))
 
@@ -2153,7 +2197,10 @@ def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
                     or o.last_triaged_at < updated_at
                     or days_since(o.last_triaged_at) >= STALE_ISSUE_DAYS
                 ):
-                    yield fetch_func(number, updated_at)
+                    try:
+                        yield fetch_func(number, updated_at)
+                    except TriageNextTime as ex:
+                        logging.warning(ex)
 
             if objs["pageInfo"]["hasNextPage"]:
                 variables["after"] = objs["pageInfo"]["endCursor"]
@@ -2179,6 +2226,7 @@ def daemon(
         logging.info("Could not use cache: '%s'", e)
 
     while True:
+        sleep_seconds = SLEEP_SECONDS
         logging.info("Starting triage")
         _http_request_counter = 0
         start = time.time()
@@ -2191,6 +2239,9 @@ def daemon(
                     logging.warning(e)
                 else:
                     cache[obj.number] = obj.to_cache_entry()
+        except AbortCurrentTriageAndWait:
+            sleep_seconds = AbortCurrentTriageAndWait.wait_in_seconds
+            logging.warning("Triage aborted due to network failures")
         finally:
             if n:
                 with tempfile.NamedTemporaryFile(dir=".", delete=False) as f:
@@ -2209,8 +2260,8 @@ def daemon(
                 f"Took {time.time() - start:.2f} seconds and {_http_request_counter} HTTP requests to check for new/stale "
                 f"issues/PRs{f' and triage {n} of them.' if n else '.'}",
             )
-        logging.info("Sleeping for %d minutes", SLEEP_SECONDS // 60)
-        time.sleep(SLEEP_SECONDS)
+        logging.info("Sleeping for %d minutes", sleep_seconds // 60)
+        time.sleep(sleep_seconds)
 
 
 gh_token = azp_token = None
