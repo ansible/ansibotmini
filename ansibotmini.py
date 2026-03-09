@@ -1188,7 +1188,7 @@ def process_component(data):
                 if "/" in c:
                     if "#" in c:
                         c = c.split("#")[0]
-                    c.replace("\\", "").strip()
+                    c = c.replace("\\", "").strip()
                 else:
                     c = (
                         c.lower()
