@@ -148,6 +148,7 @@ VALID_LABELS = {
     "pending_ci",
     "pre_azp",
     "stale_ci",
+    "stale_pr",
     "stale_review",
     "test",
     "waiting_on_contributor",
