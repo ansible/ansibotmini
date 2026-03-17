@@ -374,9 +374,12 @@ files(first: 50) {
     path
   }
 }
-last_commit: commits(last: 1) {
+commits(last: 100) {
   nodes {
     commit {
+      signature {
+        isValid
+      }
       statusCheckRollup {
         state
       }
@@ -742,6 +745,7 @@ class PR(Base):
     has_issue: bool
     created_at: datetime.datetime
     pushed_at: datetime.datetime
+    all_commits_signed: bool
 
     def close(self) -> None:
         try:
@@ -827,7 +831,7 @@ class PR(Base):
             kwargs["last_reviewed_at"] = datetime.datetime.fromisoformat(
                 kwargs["last_reviewed_at"]
             )
-        last_commit = o["last_commit"]["nodes"][0]["commit"]
+        last_commit = o["commits"]["nodes"][-1]["commit"]
         kwargs["last_committed_at"] = datetime.datetime.fromisoformat(
             last_commit["committedDate"]
         )
@@ -892,6 +896,10 @@ class PR(Base):
             f"{repo['owner']['login']}/{repo['name']}" if repo else "ghost/ghost"
         )
         kwargs["has_issue"] = len(o["closingIssuesReferences"]["nodes"]) > 0
+        kwargs["all_commits_signed"] = all(
+            (s := c["commit"]["signature"]) is not None and s.get("isValid", False)
+            for c in o["commits"]["nodes"]
+        )
 
         return cls(**kwargs)
 
@@ -1860,6 +1868,18 @@ def networking(obj: GH_OBJ, actions: Actions) -> None:
         actions.to_unlabel.append("networking")
 
 
+def signed_commits(obj: GH_OBJ, actions: Actions) -> None:
+    if (
+        isinstance(obj, PR)
+        and not obj.all_commits_signed
+        # prevent spamming the whole repo
+        and obj.pushed_at > datetime.datetime(2026, 3, 17, tzinfo=datetime.timezone.utc)
+    ):
+        actions.comments.append(
+            template_comment("signed_commits", {"author": obj.author})
+        )
+
+
 bot_funcs = [
     match_components,  # order matters, other funcs use detected components
     match_object_type,  # order matters, other funcs use detected object type
@@ -1882,6 +1902,7 @@ bot_funcs = [
     needs_template,
     test_support_plugin,
     networking,
+    signed_commits,
 ]
 
 
