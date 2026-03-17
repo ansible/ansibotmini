@@ -2386,7 +2386,7 @@ def main() -> None:
         obj: GH_OBJ
         try:
             obj = Issue.fetch(args.number)
-        except ValueError:
+        except TriageNextTime:
             obj = PR.fetch(args.number)
 
         triage(
