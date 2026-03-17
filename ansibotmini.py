@@ -1280,8 +1280,14 @@ def match_existing_components(
         files.add(filename)
         if "/" not in filename:
             for path in paths:
-                files.add(f"{path}{filename}.py")
-                files.add(f"{path}{filename}")
+                files.update(
+                    {
+                        f"{path}{filename}.py",
+                        f"{path}{filename}",
+                        f"{path}_{filename}.py",  # deprecated plugin
+                        f"{path}_{filename}",  # deprecated plugin
+                    }
+                )
 
     components = files.intersection(existing_files)
     if not components:
