@@ -1872,7 +1872,10 @@ def signed_commits(obj: GH_OBJ, actions: Actions) -> None:
     if (
         isinstance(obj, PR)
         and not obj.all_commits_signed
-        # prevent spamming the whole repo
+        # Only post the comment once.
+        and obj.last_boilerplate("signed_commits") is None
+        # Only notify on PRs with push activity after the signed-commits requirement was enabled to limit noise.
+        # This can be removed in the future.
         and obj.pushed_at > datetime.datetime(2026, 3, 17, tzinfo=datetime.timezone.utc)
     ):
         actions.comments.append(
