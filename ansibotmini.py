@@ -1776,7 +1776,11 @@ def linked_objs(obj: GH_OBJ, actions: Actions) -> None:
 
 
 def needs_template(obj: GH_OBJ, actions: Actions) -> None:
-    if isinstance(obj, PR) or obj.author in TriageContext.get().committers:
+    if (
+        isinstance(obj, PR)
+        or obj.author in TriageContext.get().committers
+        or not obj.is_new()
+    ):
         return
     missing = []
     if "bug" in actions.to_label:
