@@ -218,7 +218,6 @@ ISSUE_BUG_TEMPLATE_SECTIONS = frozenset(
 LABELS_DO_NOT_OVERRIDE = {
     "bug",
     "feature",
-    "has_pr",
     "module",
     "needs_revision",
     "needs_template",
