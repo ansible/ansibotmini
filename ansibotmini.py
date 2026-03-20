@@ -284,6 +284,7 @@ query($number: Int!)
       number
       title
       body
+      createdAt
       url
       labels (first: 40) {
         nodes {
@@ -364,7 +365,6 @@ QUERY_SINGLE_PR = QUERY_SINGLE_TMPL % (
     }
     """,
     """
-createdAt
 baseRef {
   name
 }
@@ -480,10 +480,10 @@ class Base:
     number: int
     title: str
     body: str
+    created_at: datetime.datetime
     url: str
     events: list[Event]
     labels: dict[str, str]
-    updated_at: datetime.datetime
     components: list[str]
     last_triaged_at: datetime.datetime
     commands_found: dict[str, list[Command]] = dataclasses.field(
@@ -688,12 +688,11 @@ class Issue(Base):
             title=self.title,
             url=self.url,
             components=self.components,
-            updated_at=self.updated_at,
             last_triaged_at=self.last_triaged_at,
         )
 
     @classmethod
-    def fetch(cls, number: int, updated_at: datetime.datetime | None = None) -> t.Self:
+    def fetch(cls, number: int) -> t.Self:
         logging.info("Getting issue #%d", number)
         resp = send_query(
             {"query": QUERY_SINGLE_ISSUE, "variables": {"number": number}}
@@ -717,12 +716,12 @@ class Issue(Base):
             "number": o["number"],
             "title": o["title"],
             "body": o["body"],
+            "created_at": datetime.datetime.fromisoformat(o["createdAt"]),
             "url": o["url"],
             "events": process_events(o),
             "labels": {
                 node["name"]: node["id"] for node in o["labels"].get("nodes", [])
             },
-            "updated_at": updated_at,
             "components": [],
             "last_triaged_at": NEVER,
             "has_pr": bool(len(o["closedByPullRequestsReferences"]["nodes"])),
@@ -742,7 +741,6 @@ class PR(Base):
     ci: CI
     from_repo: str
     has_issue: bool
-    created_at: datetime.datetime
     pushed_at: datetime.datetime
     all_commits_signed: bool
 
@@ -774,14 +772,13 @@ class PR(Base):
             title=self.title,
             url=self.url,
             components=self.components,
-            updated_at=self.updated_at,
             last_triaged_at=self.last_triaged_at,
             last_committed_at=self.last_committed_at,
             pushed_at=self.pushed_at,
         )
 
     @classmethod
-    def fetch(cls, number: int, updated_at: datetime.datetime | None = None) -> t.Self:
+    def fetch(cls, number: int) -> t.Self:
         logging.info("Getting PR #%d", number)
         resp = send_query({"query": QUERY_SINGLE_PR, "variables": {"number": number}})
 
@@ -803,15 +800,14 @@ class PR(Base):
             "number": o["number"],
             "title": o["title"],
             "body": o["body"],
+            "created_at": datetime.datetime.fromisoformat(o["createdAt"]),
             "url": o["url"],
             "events": process_events(o),
             "labels": {
                 node["name"]: node["id"] for node in o["labels"].get("nodes", [])
             },
-            "updated_at": updated_at,
             "components": [],
             "last_triaged_at": NEVER,
-            "created_at": datetime.datetime.fromisoformat(o["createdAt"]),
             "branch": o["baseRef"]["name"],
             "files": [f["path"] for f in o["files"]["nodes"]],
             "mergeable": o["mergeable"].lower(),
@@ -1041,7 +1037,6 @@ class IssueCacheEntry:
     title: str
     url: str
     components: list[str]
-    updated_at: datetime.datetime
     last_triaged_at: datetime.datetime
 
 
@@ -1976,7 +1971,7 @@ def triage(
 
     # commands
     bodies = itertools.chain(
-        ((obj.author, obj.body, obj.updated_at),),
+        ((obj.author, obj.body, obj.created_at),),
         (
             (e.author, e.body, e.updated_at)
             for e in obj.events
@@ -2228,7 +2223,7 @@ def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
                     or days_since(o.last_triaged_at) >= STALE_ISSUE_DAYS
                 ):
                     try:
-                        yield fetch_func(number, updated_at)
+                        yield fetch_func(number)
                     except TriageNextTime as ex:
                         logging.warning(ex)
 
