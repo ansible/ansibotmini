@@ -220,7 +220,6 @@ LABELS_DO_NOT_OVERRIDE = {
     "feature",
     "module",
     "needs_revision",
-    "needs_template",
     "networking",
     "stale_review",
     "test",
@@ -1799,27 +1798,17 @@ def needs_template(obj: GH_OBJ, actions: Actions) -> None:
         missing.remove("Component Name")
 
     if missing:
-        if obj.is_new():  # do not spam old issues
-            actions.to_label.append("needs_template")
-            actions.to_label.append("needs_info")
-            if obj.last_boilerplate("issue_missing_data") is None:
-                actions.comments.append(
-                    template_comment(
-                        "issue_missing_data",
-                        {
-                            "author": obj.author,
-                            "obj_type": obj.__class__.__name__,
-                            "missing_sections": "\n".join((f"- {s}" for s in missing)),
-                        },
-                    )
-                )
-    else:
-        actions.to_unlabel.append("needs_template")
-        if (
-            not obj.was_labeled_by_human("needs_info")
-            and "needs_info" not in obj.commands_found
-        ):
-            actions.to_unlabel.append("needs_info")
+        actions.to_label.append("needs_template")
+        actions.close = True
+        actions.comments.append(
+            template_comment(
+                "issue_missing_data",
+                {
+                    "author": obj.author,
+                    "missing_sections": "\n".join((f"- {s}" for s in missing)),
+                },
+            )
+        )
 
 
 def test_support_plugin(obj: GH_OBJ, actions: Actions) -> None:
