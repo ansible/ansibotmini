@@ -2202,7 +2202,7 @@ def lock_closed_objects() -> None:
             logging.info("Locking #%d", node["number"])
             send_query(
                 {
-                    "query": 'mutation($input: LockLockableInput!) { lockLockable(input: {lockableId: "%s", lockReason: RESOLVED}) { clientMutationId } }'
+                    "query": 'mutation { lockLockable(input: {lockableId: "%s", lockReason: RESOLVED}) { clientMutationId } }'
                     % node["id"]
                 }
             )
