@@ -84,6 +84,7 @@ STALE_ISSUE_DAYS = 7
 NEEDS_INFO_WARN_DAYS = 14
 NEEDS_INFO_CLOSE_DAYS = 28
 WAITING_ON_CONTRIBUTOR_CLOSE_DAYS = 365
+LOCK_AFTER_CLOSE_DAYS = 14
 SLEEP_SECONDS = 300
 NEVER = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
 
@@ -2172,6 +2173,48 @@ def ratelimit_to_str(rate_limit: dict[str, t.Any]) -> str:
     return f"cost: {rate_limit['cost']}, {rate_limit['remaining']}/{rate_limit['limit']} until {rate_limit['resetAt']}"
 
 
+def lock_closed_objects() -> None:
+    query = """
+    query {
+      search(query: "repo:ansible/ansible is:closed is:unlocked closed:<%s", type: ISSUE, first: 10) {
+        nodes {
+          ... on Issue { id number }
+          ... on PullRequest { id number }
+        }
+      }
+    }
+    """ % (
+        (
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(days=LOCK_AFTER_CLOSE_DAYS)
+        ).strftime("%Y-%m-%d")
+    )
+
+    try:
+        resp = send_query({"query": query})
+        if nodes := resp.json()["data"]["search"]["nodes"]:
+            logging.info("Locking closed old issues/PRs")
+        else:
+            logging.info("No issue/PRs to lock")
+            return
+
+        for node in nodes:
+            logging.info("Locking #%d", node["number"])
+            send_query(
+                {
+                    "query": 'mutation($input: LockLockableInput!) { lockLockable(input: {lockableId: "%s", lockReason: RESOLVED}) { clientMutationId } }'
+                    % node["id"]
+                }
+            )
+    except KeyError:
+        logging.warning(
+            "Skipping locking issue/PRs due to incomplete data, the response was: '%s'",
+            resp,
+        )
+    except TriageNextTime as ex:
+        logging.warning(ex)
+
+
 def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
     open_numbers: list[int] = []
     for obj_name, query, fetch_func in (
@@ -2278,6 +2321,10 @@ def daemon(
                 f"Took {time.time() - start:.2f} seconds and {_http_request_counter} HTTP requests to check for new/stale "
                 f"issues/PRs{f' and triage {n} of them.' if n else '.'}",
             )
+
+        if force:
+            lock_closed_objects()
+
         logging.info("Sleeping for %d minutes", sleep_seconds // 60)
         time.sleep(sleep_seconds)
 
