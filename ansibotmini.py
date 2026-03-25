@@ -2178,8 +2178,8 @@ def lock_closed_objects() -> None:
     query {
       search(query: "repo:ansible/ansible is:closed is:unlocked closed:<%s", type: ISSUE, first: 10) {
         nodes {
-          ... on Issue { id number }
-          ... on PullRequest { id number }
+          ... on Issue { id number locked }
+          ... on PullRequest { id number locked }
         }
       }
     }
@@ -2200,6 +2200,10 @@ def lock_closed_objects() -> None:
 
         for node in nodes:
             logging.info("Locking #%d", node["number"])
+            if node["locked"]:
+                raise AssertionError(
+                    f"#{node["number"]} is already locked. Incorrect data returned by the query, needs investigation."
+                )
             send_query(
                 {
                     "query": 'mutation { lockLockable(input: {lockableId: "%s", lockReason: RESOLVED}) { clientMutationId } }'
