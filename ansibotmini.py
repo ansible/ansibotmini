@@ -2198,18 +2198,20 @@ def lock_closed_objects() -> None:
             logging.info("No issue/PRs to lock")
             return
 
+        if all(node["locked"] for node in nodes):
+            raise AssertionError(
+                f"All nodes are already locked. Incorrect data returned by the query, needs investigation."
+            )
+
         for node in nodes:
             logging.info("Locking #%d", node["number"])
-            if node["locked"]:
-                raise AssertionError(
-                    f"#{node["number"]} is already locked. Incorrect data returned by the query, needs investigation."
+            if not node["locked"]:
+                send_query(
+                    {
+                        "query": 'mutation { lockLockable(input: {lockableId: "%s", lockReason: RESOLVED}) { clientMutationId } }'
+                        % node["id"]
+                    }
                 )
-            send_query(
-                {
-                    "query": 'mutation { lockLockable(input: {lockableId: "%s", lockReason: RESOLVED}) { clientMutationId } }'
-                    % node["id"]
-                }
-            )
     except KeyError:
         logging.warning(
             "Skipping locking issue/PRs due to incomplete data, the response was: '%s'",
