@@ -12,6 +12,7 @@ import dataclasses
 import datetime
 import difflib
 import hashlib
+import html
 import io
 import itertools
 import json
@@ -2471,7 +2472,7 @@ def generate_byfile_page(cache: dict[int, CacheEntry]):
         )
         for number, entry in sorted(issues, key=lambda x: x[0]):
             data.append(
-                f'<a href="{entry.url}">#{number}</a>&emsp;{entry.title}<br />\n'
+                f'<a href="{entry.url}">#{number}</a>&emsp;{html.escape(entry.title)}<br />\n'
             )
         data.append("<br />\n")
 
