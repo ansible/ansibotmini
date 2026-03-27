@@ -1346,7 +1346,6 @@ def match_components(obj: GH_OBJ, actions: Actions) -> None:
             and (comment := get_collection_redirection_comment(processed_components))
         ):
             actions.comments.append(comment)
-            actions.to_label.append("bot_closed")
             actions.close = True
             post_comments_banner = False
 
@@ -1476,7 +1475,6 @@ def waiting_on_contributor(obj: GH_OBJ, actions: Actions) -> None:
         days_since(labeled_date) > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
     ):
         actions.close = True
-        actions.to_label.append("bot_closed")
         actions.to_unlabel.append("waiting_on_contributor")
         actions.comments.append(template_comment("waiting_on_contributor"))
 
@@ -1494,7 +1492,6 @@ def needs_info(obj: GH_OBJ, actions: Actions) -> None:
             days_labeled = days_since(needs_info_labeled_date)
             if days_labeled > NEEDS_INFO_CLOSE_DAYS:
                 actions.close = True
-                actions.to_label.append("bot_closed")
                 actions.comments.append(
                     template_comment(
                         "needs_info_close",
@@ -1758,7 +1755,6 @@ def pr_from_upstream(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR) or obj.from_repo != "ansible/ansible":
         return
     actions.close = True
-    actions.to_label.append("bot_closed")
     actions.comments.append(
         template_comment("pr_from_upstream", {"author": obj.author})
     )
@@ -2020,8 +2016,9 @@ def triage(
             # information that would be irrelevant after closing
             break
 
-    # remove bot_closed for re-opened issues/prs
-    if "bot_closed" not in actions.to_label:
+    if actions.close:
+        actions.to_label.append("bot_closed")
+    else:
         actions.to_unlabel.append("bot_closed")
 
     logging.info("All potential actions:")
