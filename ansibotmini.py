@@ -1522,7 +1522,7 @@ def needs_info(obj: GH_OBJ, actions: Actions) -> None:
 
 def match_object_type(obj: GH_OBJ, actions: Actions) -> None:
     if match := OBJ_TYPE_RE.search(obj.body):
-        data = re.sub(r"~[^~]+~", "", match.group(1).lower()).lower()
+        data = re.sub(r"~[^~]+~", "", match.group(1).lower())
         for m in re.findall(r"\b(feature|bug|test|bugfix)\b", data, flags=re.MULTILINE):
             if m == "bugfix":
                 m = "bug"
