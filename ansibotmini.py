@@ -724,7 +724,7 @@ class Issue(Base):
             },
             "components": [],
             "last_triaged_at": NEVER,
-            "has_pr": bool(len(o["closedByPullRequestsReferences"]["nodes"])),
+            "has_pr": bool(o["closedByPullRequestsReferences"]["nodes"]),
         }
 
         return cls(**kwargs)
@@ -890,7 +890,7 @@ class PR(Base):
         kwargs["from_repo"] = (
             f"{repo['owner']['login']}/{repo['name']}" if repo else "ghost/ghost"
         )
-        kwargs["has_issue"] = len(o["closingIssuesReferences"]["nodes"]) > 0
+        kwargs["has_issue"] = bool(o["closingIssuesReferences"]["nodes"])
         kwargs["all_commits_signed"] = all(
             (s := c["commit"]["signature"]) is not None and s.get("isValid", False)
             for c in o["commits"]["nodes"]
@@ -1176,7 +1176,7 @@ def get_committers() -> list[str]:
     ]
 
 
-def process_component(data):
+def process_component(data: str) -> list[str]:
     rv = []
     for line in (
         l
@@ -1558,8 +1558,8 @@ def _sanitize_ci_comment(body: str) -> str:
     max_comment_len = 60000
     if len(body) <= max_comment_len:
         return body
-    ommited_msg = "... [omitted, message too long]"
-    return f"{body[:max_comment_len - len(ommited_msg)]}{ommited_msg}"
+    omitted_msg = "... [omitted, message too long]"
+    return f"{body[:max_comment_len - len(omitted_msg)]}{omitted_msg}"
 
 
 def ci_comments(obj: GH_OBJ, actions: Actions) -> None:
@@ -2195,7 +2195,7 @@ def lock_closed_objects() -> None:
         if nodes := resp.json()["data"]["search"]["nodes"]:
             logging.info("Locking closed old issues/PRs")
         else:
-            logging.info("No issue/PRs to lock")
+            logging.info("No issues/PRs to lock")
             return
 
         if all(node["locked"] for node in nodes):
@@ -2214,7 +2214,7 @@ def lock_closed_objects() -> None:
                 )
     except KeyError:
         logging.warning(
-            "Skipping locking issue/PRs due to incomplete data, the response was: '%s'",
+            "Skipping locking issues/PRs due to incomplete data, the response was: '%s'",
             resp,
         )
     except TriageNextTime as ex:
