@@ -821,12 +821,13 @@ class PR(Base):
                 reviews[author] = review["state"].lower()
         kwargs["changes_requested"] = "changes_requested" in reviews.values()
         kwargs["last_reviewed_at"] = max(
-            (r["updatedAt"] for r in o["reviews"]["nodes"]), default=None
+            (
+                datetime.datetime.fromisoformat(r["updatedAt"])
+                for r in o["reviews"]["nodes"]
+                if not r["isMinimized"]
+            ),
+            default=NEVER,
         )
-        if kwargs["last_reviewed_at"]:
-            kwargs["last_reviewed_at"] = datetime.datetime.fromisoformat(
-                kwargs["last_reviewed_at"]
-            )
         last_commit = o["commits"]["nodes"][-1]["commit"]
         kwargs["last_committed_at"] = datetime.datetime.fromisoformat(
             last_commit["committedDate"]
@@ -1628,9 +1629,7 @@ def needs_revision(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR) or obj.ci.completed_at is None:
         return
     if (
-        obj.changes_requested
-        and obj.last_reviewed_at is not None
-        and obj.last_reviewed_at > obj.last_committed_at
+        obj.changes_requested and obj.last_reviewed_at > obj.last_committed_at
     ) or not obj.ci.passed:
         actions.to_label.append("needs_revision")
     else:
@@ -1744,7 +1743,7 @@ def needs_rebase(obj: GH_OBJ, actions: Actions) -> None:
 
 
 def stale_review(obj: GH_OBJ, actions: Actions) -> None:
-    if not isinstance(obj, PR) or obj.last_reviewed_at is None:
+    if not isinstance(obj, PR) or obj.last_reviewed_at == NEVER:
         return
     if obj.last_reviewed_at < obj.last_committed_at:
         actions.to_label.append("stale_review")
