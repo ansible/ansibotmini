@@ -1600,7 +1600,7 @@ def ci_comments(obj: GH_OBJ, actions: Actions) -> None:
                     ci_comment.append(f"{r['message']}\n```\n{r['output']}\n```\n")
     if ci_comment:
         results = _sanitize_ci_comment("\n".join(ci_comment))
-        r_hash = hashlib.md5(results.encode()).hexdigest()
+        r_hash = hashlib.md5(results.encode(), usedforsecurity=False).hexdigest()
         if not any(
             e
             for e in obj.events
