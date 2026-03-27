@@ -949,6 +949,7 @@ class Actions:
     to_unlabel: list[str] = dataclasses.field(default_factory=list)
     comments: list[str] = dataclasses.field(default_factory=list)
     close: bool = False
+    needs_revisit: bool = False
 
     def __bool__(self):
         return bool(self.to_label or self.to_unlabel or self.comments or self.close)
@@ -1649,18 +1650,18 @@ def stale_pr(obj: GH_OBJ, actions: Actions) -> None:
 
 
 def needs_ci(obj: GH_OBJ, actions: Actions) -> None:
-    if "stale_pr" in actions.to_label:
+    if (
+        not isinstance(obj, PR)
+        or "needs_rebase" in actions.to_label
+        or "stale_pr" in actions.to_label
+    ):
         actions.to_unlabel.append("needs_ci")
         return
 
     if (
-        not isinstance(obj, PR)
-        or "needs_rebase" in actions.to_label
-        or (
-            datetime.datetime.now(datetime.timezone.utc) - obj.created_at
-        ).total_seconds()
-        < 5 * 60
-    ):
+        datetime.datetime.now(datetime.timezone.utc) - obj.created_at
+    ).total_seconds() < 5 * 60 and obj.ci.build_id is None:
+        actions.needs_revisit = True
         actions.to_unlabel.append("needs_ci")
         return
 
@@ -2078,7 +2079,9 @@ def triage(
     else:
         logging.info("Skipping taking actions")
 
-    obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
+    if not actions.needs_revisit:
+        obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
+
     logging.info(
         "Done triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number
     )
