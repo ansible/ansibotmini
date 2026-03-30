@@ -2055,6 +2055,7 @@ def triage(
 
             take_actions = True
             if ask:
+                print("\a", end="", flush=True)
                 user_input = input("Take actions? (y/n): ")
                 take_actions = user_input.strip() == "y"
 
