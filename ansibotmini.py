@@ -455,8 +455,8 @@ class AbortCurrentTriageAndWait(Exception):
     wait_in_seconds = 15 * 60  # 15 minutes
 
 
-class TriageNextTime(Exception):
-    """Skip triaging an issue/PR due to the bot not receiving complete data to continue. Try next time."""
+class SkipTriage(Exception):
+    """Skip triaging an issue/PR or the whole batch due to a networking issue and/or the bot receiving incomplete data."""
 
     failures: t.ClassVar[collections.deque[datetime.datetime]] = collections.deque(
         maxlen=10
@@ -465,12 +465,12 @@ class TriageNextTime(Exception):
     def __init__(self, msg: str) -> None:
         super().__init__(msg)
         now = datetime.datetime.now(tz=datetime.timezone.utc)
-        TriageNextTime.failures.append(now)
+        SkipTriage.failures.append(now)
 
         def in_last_five_minutes(dt: datetime.datetime) -> bool:
             return (now - dt).total_seconds() <= 60 * 5
 
-        if sum((1 for dt in TriageNextTime.failures if in_last_five_minutes(dt))) >= 5:
+        if sum((1 for dt in SkipTriage.failures if in_last_five_minutes(dt))) >= 5:
             raise AbortCurrentTriageAndWait
 
 
@@ -708,7 +708,7 @@ class Issue(Base):
         try:
             data = resp.json()["data"]
         except KeyError:
-            raise TriageNextTime(
+            raise SkipTriage(
                 f"Skipping due to incomplete data received when fetching the issue, the response was: {resp!r}"
             )
 
@@ -796,7 +796,7 @@ class PR(Base):
         try:
             data = resp.json()["data"]
         except KeyError:
-            raise TriageNextTime(
+            raise SkipTriage(
                 f"Skipping due to incomplete data received when fetching the PR, the response was: {resp!r}"
             )
 
@@ -1134,7 +1134,7 @@ def http_request(
                 )
                 time.sleep(wait_seconds)
 
-    raise TriageNextTime(
+    raise SkipTriage(
         f"Skipping due to an error sending a HTTP request to {url!r}, the error was {error_msg!r}"
     )
 
@@ -1151,7 +1151,7 @@ def send_query(data: dict[str, t.Any]) -> Response:
     )
 
     if resp.json().get("errors"):
-        raise TriageNextTime(f"Skipping due to an error in sending query: {resp!r}")
+        raise SkipTriage(f"Skipping due to an error in sending query: {resp!r}")
 
     return resp
 
@@ -1759,7 +1759,8 @@ def needs_rebase(obj: GH_OBJ, actions: Actions) -> None:
         case "conflicting":
             actions.to_label.append(Label.NEEDS_REBASE)
         case "unknown":
-            raise TriageNextTime("Skipping due to the mergeable state being unknown")
+            logging.info("The mergeable state is unknown, will revisit")
+            actions.needs_revisit = True
         case _:
             raise AssertionError(f"Unexpected mergeable value: '{obj.mergeable}'")
 
@@ -2250,7 +2251,7 @@ def lock_closed_objects() -> None:
             "Skipping locking issues/PRs due to incomplete data, the response was: '%s'",
             resp,
         )
-    except TriageNextTime as ex:
+    except SkipTriage as ex:
         logging.warning(ex)
 
 
@@ -2265,7 +2266,7 @@ def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
             logging.info("Getting open %s", obj_name)
             try:
                 resp = send_query({"query": query, "variables": variables})
-            except TriageNextTime as ex:
+            except SkipTriage as ex:
                 logging.warning(ex)
                 break
 
@@ -2299,7 +2300,7 @@ def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
                 ):
                     try:
                         yield fetch_func(number)
-                    except TriageNextTime as ex:
+                    except SkipTriage as ex:
                         logging.warning(ex)
 
             if objs["pageInfo"]["hasNextPage"]:
@@ -2335,7 +2336,7 @@ def daemon(
             for n, obj in enumerate(fetch_objects(cache), 1):
                 try:
                     triage(obj, force, ask, ignore_bot_skip)
-                except TriageNextTime as e:
+                except SkipTriage as e:
                     logging.warning(e)
                 else:
                     cache[obj.number] = obj.to_cache_entry()
@@ -2459,7 +2460,7 @@ def main() -> None:
         obj: GH_OBJ
         try:
             obj = Issue.fetch(args.number)
-        except TriageNextTime:
+        except SkipTriage:
             obj = PR.fetch(args.number)
 
         triage(
