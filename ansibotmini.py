@@ -11,6 +11,7 @@ import configparser
 import dataclasses
 import datetime
 import difflib
+import enum
 import hashlib
 import html
 import io
@@ -116,44 +117,54 @@ VALID_COMMANDS = (
     "!needs_collection_redirect",
 )
 
-VALID_LABELS = {
-    # label ids of previous versions of affects_* would be downloaded on demand
-    "affects_2.9",
-    "affects_2.10",
-    "affects_2.11",
-    "affects_2.12",
-    "affects_2.13",
-    "affects_2.14",
-    "affects_2.15",
-    "affects_2.16",
-    "affects_2.17",
-    "affects_2.18",
-    "affects_2.19",
-    "affects_2.20",
-    "affects_2.21",
-    "backport",
-    "bot_broken",
-    "bot_closed",
-    "bug",
-    "ci_verified",
-    "feature",
-    "has_issue",
-    "has_pr",
-    "module",
-    "needs_ci",
-    "needs_info",
-    "needs_rebase",
-    "needs_revision",
-    "needs_template",
-    "needs_triage",
-    "networking",
-    "pending_ci",
-    "pre_azp",
-    "stale_ci",
-    "stale_pr",
-    "stale_review",
-    "test",
-    "waiting_on_contributor",
+
+class Label(enum.StrEnum):
+    AFFECTS_2_9 = "affects_2.9"
+    AFFECTS_2_10 = "affects_2.10"
+    AFFECTS_2_11 = "affects_2.11"
+    AFFECTS_2_12 = "affects_2.12"
+    AFFECTS_2_13 = "affects_2.13"
+    AFFECTS_2_14 = "affects_2.14"
+    AFFECTS_2_15 = "affects_2.15"
+    AFFECTS_2_16 = "affects_2.16"
+    AFFECTS_2_17 = "affects_2.17"
+    AFFECTS_2_18 = "affects_2.18"
+    AFFECTS_2_19 = "affects_2.19"
+    AFFECTS_2_20 = "affects_2.20"
+    AFFECTS_2_21 = "affects_2.21"
+    BACKPORT = "backport"
+    BOT_BROKEN = "bot_broken"
+    BOT_CLOSED = "bot_closed"
+    BUG = "bug"
+    CI_VERIFIED = "ci_verified"
+    FEATURE = "feature"
+    HAS_ISSUE = "has_issue"
+    HAS_PR = "has_pr"
+    MODULE = "module"
+    NEEDS_CI = "needs_ci"
+    NEEDS_INFO = "needs_info"
+    NEEDS_REBASE = "needs_rebase"
+    NEEDS_REVISION = "needs_revision"
+    NEEDS_TEMPLATE = "needs_template"
+    NEEDS_TRIAGE = "needs_triage"
+    NETWORKING = "networking"
+    PENDING_CI = "pending_ci"
+    PRE_AZP = "pre_azp"
+    STALE_CI = "stale_ci"
+    STALE_PR = "stale_pr"
+    STALE_REVIEW = "stale_review"
+    TEST = "test"
+    WAITING_ON_CONTRIBUTOR = "waiting_on_contributor"
+
+    @classmethod
+    def _missing_(cls, value: object) -> t.Self | None:
+        if isinstance(value, str) and (name := _LABEL_ALIASES.get(value)):
+            return cls(name)
+        return None
+
+
+_LABEL_ALIASES: dict[str, str] = {
+    "triage": "needs_triage",
 }
 
 COMMANDS_RE = re.compile(
@@ -218,13 +229,13 @@ ISSUE_BUG_TEMPLATE_SECTIONS = frozenset(
 )
 
 LABELS_DO_NOT_OVERRIDE = {
-    "bug",
-    "feature",
-    "module",
-    "needs_revision",
-    "networking",
-    "stale_review",
-    "test",
+    Label.BUG,
+    Label.FEATURE,
+    Label.MODULE,
+    Label.NEEDS_REVISION,
+    Label.NETWORKING,
+    Label.STALE_REVIEW,
+    Label.TEST,
 }
 
 QUERY_NUMBERS_TMPL = """
@@ -289,7 +300,6 @@ query($number: Int!)
       url
       labels (first: 40) {
         nodes {
-          id
           name
         }
       }
@@ -474,7 +484,7 @@ class Response:
         return json.loads(self.raw_data or b"{}")
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(kw_only=True, slots=True)
 class Base:
     id: str
     author: str
@@ -484,7 +494,7 @@ class Base:
     created_at: datetime.datetime
     url: str
     events: list[Event]
-    labels: dict[str, str]
+    labels: set[Label]
     components: list[str]
     last_triaged_at: datetime.datetime
     commands_found: dict[str, list[Command]] = dataclasses.field(
@@ -495,31 +505,31 @@ class Base:
         return not any(
             e
             for e in self.events
-            if isinstance(e, LabeledEvent) and e.label in ("needs_triage", "triage")
+            if isinstance(e, LabeledEvent) and e.label == Label.NEEDS_TRIAGE
         )
 
     def was_reopened(self) -> bool:
         return any(e for e in self.events if isinstance(e, ReopenedEvent))
 
-    def was_labeled_by_human(self, label_name: str) -> bool:
+    def was_labeled_by_human(self, label: Label) -> bool:
         return any(
             e
             for e in self.events
             if isinstance(e, LabeledEvent)
-            and e.label == label_name
+            and e.label == label
             and e.author != BOT_ACCOUNT
         )
 
-    def was_unlabeled_by_human(self, label_name: str) -> bool:
+    def was_unlabeled_by_human(self, label: Label) -> bool:
         return any(
             e
             for e in self.events
             if isinstance(e, UnlabeledEvent)
-            and e.label == label_name
+            and e.label == label
             and e.author != BOT_ACCOUNT
         )
 
-    def last_labeled(self, name: str) -> datetime.datetime | None:
+    def last_labeled(self, name: Label) -> datetime.datetime | None:
         return max(
             (
                 e.created_at
@@ -529,7 +539,7 @@ class Base:
             default=None,
         )
 
-    def last_unlabeled(self, name: str) -> datetime.datetime | None:
+    def last_unlabeled(self, name: Label) -> datetime.datetime | None:
         return max(
             (
                 e.created_at
@@ -566,13 +576,13 @@ class Base:
         applied = []
         if name in self.commands_found:
             applied.append(self.commands_found[name][-1].updated_at)
-        if d := self.last_labeled(name):
+        if name in Label and (d := self.last_labeled(Label(name))):
             applied.append(d)
 
         removed = []
         if f"!{name}" in self.commands_found:
             removed.append(self.commands_found[f"!{name}"][-1].updated_at)
-        if d := self.last_unlabeled(name):
+        if name in Label and (d := self.last_unlabeled(Label(name))):
             removed.append(d)
 
         last_applied = max(applied, default=None)
@@ -582,14 +592,9 @@ class Base:
             last_removed is None or last_applied > last_removed
         )
 
-    def add_labels(self, labels: list[str]) -> None:
+    def add_labels(self, labels: list[Label]) -> None:
         ctx = TriageContext.get()
-        if not (
-            label_ids := [
-                ctx.labels_to_ids_map.get(label, get_label_id(label))
-                for label in labels
-            ]
-        ):
+        if not (label_ids := [ctx.labels_to_ids_map[label] for label in labels]):
             return
 
         query = """
@@ -611,10 +616,11 @@ class Base:
             }
         )
 
-    def remove_labels(self, labels: list[str]) -> None:
+    def remove_labels(self, labels: list[Label]) -> None:
+        ctx = TriageContext.get()
         if not (
             label_ids := [
-                self.labels[label] for label in labels if label in self.labels
+                ctx.labels_to_ids_map[label] for label in labels if label in self.labels
             ]
         ):
             return
@@ -659,7 +665,7 @@ class Base:
         )
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(kw_only=True, slots=True)
 class Issue(Base):
     has_pr: bool
 
@@ -711,27 +717,31 @@ class Issue(Base):
         if o is None:
             raise ValueError(f"{number} not found")
 
-        kwargs = {
-            "id": o["id"],
-            "author": o["author"]["login"] if o["author"] else "ghost",
-            "number": o["number"],
-            "title": o["title"],
-            "body": o["body"],
-            "created_at": datetime.datetime.fromisoformat(o["createdAt"]),
-            "url": o["url"],
-            "events": process_events(o),
-            "labels": {
-                node["name"]: node["id"] for node in o["labels"].get("nodes", [])
-            },
-            "components": [],
-            "last_triaged_at": NEVER,
-            "has_pr": bool(o["closedByPullRequestsReferences"]["nodes"]),
-        }
+        labels: set[Label] = set()
+        for node in o["labels"].get("nodes", []):
+            try:
+                labels.add(Label(node["name"]))
+            except ValueError:
+                # bot does not understand this label, skip
+                pass
 
-        return cls(**kwargs)
+        return cls(
+            id=o["id"],
+            author=o["author"]["login"] if o["author"] else "ghost",
+            number=o["number"],
+            title=o["title"],
+            body=o["body"],
+            created_at=datetime.datetime.fromisoformat(o["createdAt"]),
+            url=o["url"],
+            events=process_events(o),
+            labels=labels,
+            components=[],
+            last_triaged_at=NEVER,
+            has_pr=bool(o["closedByPullRequestsReferences"]["nodes"]),
+        )
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(kw_only=True, slots=True)
 class PR(Base):
     branch: str
     files: list[str]
@@ -795,6 +805,14 @@ class PR(Base):
         if o is None:
             raise ValueError(f"{number} not found")
 
+        labels: set[Label] = set()
+        for node in o["labels"].get("nodes", []):
+            try:
+                labels.add(Label(node["name"]))
+            except ValueError:
+                # bot does not understand this label, skip
+                pass
+
         kwargs = {
             "id": o["id"],
             "author": o["author"]["login"] if o["author"] else "ghost",
@@ -804,9 +822,7 @@ class PR(Base):
             "created_at": datetime.datetime.fromisoformat(o["createdAt"]),
             "url": o["url"],
             "events": process_events(o),
-            "labels": {
-                node["name"]: node["id"] for node in o["labels"].get("nodes", [])
-            },
+            "labels": labels,
             "components": [],
             "last_triaged_at": NEVER,
             "branch": o["baseRef"]["name"],
@@ -947,8 +963,8 @@ class Command:
 
 @dataclasses.dataclass(slots=True)
 class Actions:
-    to_label: list[str] = dataclasses.field(default_factory=list)
-    to_unlabel: list[str] = dataclasses.field(default_factory=list)
+    to_label: list[Label] = dataclasses.field(default_factory=list)
+    to_unlabel: list[Label] = dataclasses.field(default_factory=list)
     comments: list[str] = dataclasses.field(default_factory=list)
     close: bool = False
     needs_revisit: bool = False
@@ -969,7 +985,7 @@ class TriageContext:
     v29_file_list: list[str] = dataclasses.field(default_factory=list)
     v29_flatten_modules: list[str] = dataclasses.field(default_factory=list)
     collections_to_redirect: list[str] = dataclasses.field(default_factory=list)
-    labels_to_ids_map: dict[str, str] = dataclasses.field(default_factory=dict)
+    labels_to_ids_map: dict[Label, str] = dataclasses.field(default_factory=dict)
     oldest_supported_bugfix_version: tuple[int, int] = (0, 0)
     updated_at: datetime.datetime = NEVER
 
@@ -1027,7 +1043,7 @@ class TriageContext:
                 .splitlines()
             ),
             oldest_supported_bugfix_version=get_oldest_supported_bugfix_version(),
-            labels_to_ids_map={n: get_label_id(n) for n in VALID_LABELS},
+            labels_to_ids_map={n: get_label_id(n) for n in Label},
             updated_at=datetime.datetime.now(datetime.timezone.utc),
         )
 
@@ -1140,7 +1156,7 @@ def send_query(data: dict[str, t.Any]) -> Response:
     return resp
 
 
-def get_label_id(name: str) -> str:
+def get_label_id(name: Label) -> str:
     query = """
     query ($name: String!){
       repository(owner: "ansible", name: "ansible") {
@@ -1469,21 +1485,21 @@ def get_collection_redirection_comment(components: list[str]) -> str | None:
 
 def needs_triage(obj: GH_OBJ, actions: Actions) -> None:
     if obj.is_new():
-        actions.to_label.append("needs_triage")
+        actions.to_label.append(Label.NEEDS_TRIAGE)
 
 
 def waiting_on_contributor(obj: GH_OBJ, actions: Actions) -> None:
-    if (labeled_date := obj.last_labeled("waiting_on_contributor")) and (
+    if (labeled_date := obj.last_labeled(Label.WAITING_ON_CONTRIBUTOR)) and (
         days_since(labeled_date) > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
     ):
         actions.close = True
-        actions.to_unlabel.append("waiting_on_contributor")
+        actions.to_unlabel.append(Label.WAITING_ON_CONTRIBUTOR)
         actions.comments.append(template_comment("waiting_on_contributor"))
 
 
 def needs_info(obj: GH_OBJ, actions: Actions) -> None:
-    if needs_info_labeled_date := obj.last_labeled("needs_info"):
-        needs_info_unlabeled_date = obj.last_unlabeled("needs_info")
+    if needs_info_labeled_date := obj.last_labeled(Label.NEEDS_INFO):
+        needs_info_unlabeled_date = obj.last_unlabeled(Label.NEEDS_INFO)
         commented_datetime = obj.last_commented_by(obj.author)
         if (
             commented_datetime is None or needs_info_labeled_date > commented_datetime
@@ -1517,9 +1533,9 @@ def needs_info(obj: GH_OBJ, actions: Actions) -> None:
                         )
                     )
         else:
-            if "needs_info" in actions.to_label:
-                actions.to_label.remove("needs_info")
-            actions.to_unlabel.append("needs_info")
+            if Label.NEEDS_INFO in actions.to_label:
+                actions.to_label.remove(Label.NEEDS_INFO)
+            actions.to_unlabel.append(Label.NEEDS_INFO)
 
 
 def match_object_type(obj: GH_OBJ, actions: Actions) -> None:
@@ -1528,7 +1544,7 @@ def match_object_type(obj: GH_OBJ, actions: Actions) -> None:
         for m in re.findall(r"\b(feature|bug|test|bugfix)\b", data, flags=re.MULTILINE):
             if m == "bugfix":
                 m = "bug"
-            actions.to_label.append(m)
+            actions.to_label.append(Label(m))
 
 
 def match_version(obj: GH_OBJ, actions: Actions) -> None:
@@ -1538,10 +1554,16 @@ def match_version(obj: GH_OBJ, actions: Actions) -> None:
         if match := VERSION_OUTPUT_RE.search(match.group(1)):
             version = tuple(int(c) for c in match.group(1).split(".")[:2])
             version_s = f"{version[0]}.{version[1]}"
-            actions.to_label.append(f"affects_{version_s}")
+            try:
+                actions.to_label.append(Label(f"affects_{version_s}"))
+            except ValueError:
+                # version outside what is defined in Label, skip
+                # if it is older, meh
+                # if it is newer, the label needs to be created first
+                return
             if (
                 obj.is_new()  # prevent spamming half the repo
-                and "bug" in actions.to_label
+                and Label.BUG in actions.to_label
                 and version < TriageContext.get().oldest_supported_bugfix_version
             ):
                 actions.comments.append(
@@ -1571,7 +1593,7 @@ def ci_comments(obj: GH_OBJ, actions: Actions) -> None:
     if resp.status_code == 404:
         # not available anymore
         if obj.ci.passed and not obj.ci.non_azp_failures:
-            actions.to_unlabel.append("ci_verified")
+            actions.to_unlabel.append(Label.CI_VERIFIED)
         return
     failed_job_ids = []
     for r in resp.json().get("records", []):
@@ -1582,7 +1604,7 @@ def ci_comments(obj: GH_OBJ, actions: Actions) -> None:
                 obj.ci.cancelled = True
     if not failed_job_ids:
         if not obj.ci.non_azp_failures:
-            actions.to_unlabel.append("ci_verified")
+            actions.to_unlabel.append(Label.CI_VERIFIED)
         return
     ci_comment = []
     ci_verifieds = []
@@ -1617,12 +1639,12 @@ def ci_comments(obj: GH_OBJ, actions: Actions) -> None:
                 )
             )
     if (all(ci_verifieds) and len(ci_verifieds) == len(failed_job_ids)) or (
-        (labeled_date := obj.last_labeled("ci_verified"))
+        (labeled_date := obj.last_labeled(Label.CI_VERIFIED))
         and labeled_date >= obj.ci.completed_at
     ):
-        actions.to_label.append("ci_verified")
+        actions.to_label.append(Label.CI_VERIFIED)
     else:
-        actions.to_unlabel.append("ci_verified")
+        actions.to_unlabel.append(Label.CI_VERIFIED)
 
 
 def needs_revision(obj: GH_OBJ, actions: Actions) -> None:
@@ -1631,9 +1653,9 @@ def needs_revision(obj: GH_OBJ, actions: Actions) -> None:
     if (
         obj.changes_requested and obj.last_reviewed_at > obj.last_committed_at
     ) or not obj.ci.passed:
-        actions.to_label.append("needs_revision")
+        actions.to_label.append(Label.NEEDS_REVISION)
     else:
-        actions.to_unlabel.append("needs_revision")
+        actions.to_unlabel.append(Label.NEEDS_REVISION)
 
 
 def stale_pr(obj: GH_OBJ, actions: Actions) -> None:
@@ -1641,25 +1663,25 @@ def stale_pr(obj: GH_OBJ, actions: Actions) -> None:
         return
 
     if days_since(obj.pushed_at) > STALE_PR_DAYS:
-        actions.to_label.append("stale_pr")
+        actions.to_label.append(Label.STALE_PR)
     else:
-        actions.to_unlabel.append("stale_pr")
+        actions.to_unlabel.append(Label.STALE_PR)
 
 
 def needs_ci(obj: GH_OBJ, actions: Actions) -> None:
     if (
         not isinstance(obj, PR)
-        or "needs_rebase" in actions.to_label
-        or "stale_pr" in actions.to_label
+        or Label.NEEDS_REBASE in actions.to_label
+        or Label.STALE_PR in actions.to_label
     ):
-        actions.to_unlabel.append("needs_ci")
+        actions.to_unlabel.append(Label.NEEDS_CI)
         return
 
     if (
         datetime.datetime.now(datetime.timezone.utc) - obj.created_at
     ).total_seconds() < 5 * 60 and obj.ci.build_id is None:
         actions.needs_revisit = True
-        actions.to_unlabel.append("needs_ci")
+        actions.to_unlabel.append(Label.NEEDS_CI)
         return
 
     if (
@@ -1673,8 +1695,8 @@ def needs_ci(obj: GH_OBJ, actions: Actions) -> None:
         or obj.ci.cancelled
         or obj.ci.is_long_running(hours=2)
     ):
-        if "pre_azp" not in obj.labels:
-            actions.to_label.append("needs_ci")
+        if Label.PRE_AZP not in obj.labels:
+            actions.to_label.append(Label.NEEDS_CI)
             logging.info(
                 "Adding needs_ci: PR created_at: '%s', PR pushed at: '%s', PR CI: '%s'",
                 obj.created_at,
@@ -1682,17 +1704,17 @@ def needs_ci(obj: GH_OBJ, actions: Actions) -> None:
                 obj.ci,
             )
     else:
-        actions.to_unlabel.append("needs_ci")
-        actions.to_unlabel.append("pre_azp")
+        actions.to_unlabel.append(Label.NEEDS_CI)
+        actions.to_unlabel.append(Label.PRE_AZP)
 
 
 def stale_ci(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR) or obj.ci.completed_at is None:
         return
     if days_since(obj.ci.completed_at) > STALE_CI_DAYS:
-        actions.to_label.append("stale_ci")
+        actions.to_label.append(Label.STALE_CI)
     else:
-        actions.to_unlabel.append("stale_ci")
+        actions.to_unlabel.append(Label.STALE_CI)
 
 
 def pending_ci(obj: GH_OBJ, actions: Actions) -> None:
@@ -1706,25 +1728,25 @@ def pending_ci(obj: GH_OBJ, actions: Actions) -> None:
         ).total_seconds()
         > 60 * 60  # wait one hour after last push to the PR before declaring "stuck CI"
     ):
-        actions.to_label.append("pending_ci")
+        actions.to_label.append(Label.PENDING_CI)
     else:
-        actions.to_unlabel.append("pending_ci")
+        actions.to_unlabel.append(Label.PENDING_CI)
 
 
 def backport(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR):
         return
     if obj.branch.startswith("stable-"):
-        actions.to_label.append("backport")
+        actions.to_label.append(Label.BACKPORT)
     else:
-        actions.to_unlabel.append("backport")
+        actions.to_unlabel.append(Label.BACKPORT)
 
 
 def is_module(obj: GH_OBJ, actions: Actions) -> None:
     if any(c.startswith("lib/ansible/modules/") for c in obj.components):
-        actions.to_label.append("module")
+        actions.to_label.append(Label.MODULE)
     else:
-        actions.to_unlabel.append("module")
+        actions.to_unlabel.append(Label.MODULE)
 
 
 def needs_rebase(obj: GH_OBJ, actions: Actions) -> None:
@@ -1733,9 +1755,9 @@ def needs_rebase(obj: GH_OBJ, actions: Actions) -> None:
     # https://docs.github.com/en/graphql/reference/enums#mergeablestate
     match obj.mergeable:
         case "mergeable":
-            actions.to_unlabel.append("needs_rebase")
+            actions.to_unlabel.append(Label.NEEDS_REBASE)
         case "conflicting":
-            actions.to_label.append("needs_rebase")
+            actions.to_label.append(Label.NEEDS_REBASE)
         case "unknown":
             raise TriageNextTime("Skipping due to the mergeable state being unknown")
         case _:
@@ -1746,9 +1768,9 @@ def stale_review(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR) or obj.last_reviewed_at == NEVER:
         return
     if obj.last_reviewed_at < obj.last_committed_at:
-        actions.to_label.append("stale_review")
+        actions.to_label.append(Label.STALE_REVIEW)
     else:
-        actions.to_unlabel.append("stale_review")
+        actions.to_unlabel.append(Label.STALE_REVIEW)
 
 
 def pr_from_upstream(obj: GH_OBJ, actions: Actions) -> None:
@@ -1763,14 +1785,14 @@ def pr_from_upstream(obj: GH_OBJ, actions: Actions) -> None:
 def linked_objs(obj: GH_OBJ, actions: Actions) -> None:
     if isinstance(obj, PR):
         if obj.has_issue:
-            actions.to_label.append("has_issue")
+            actions.to_label.append(Label.HAS_ISSUE)
         else:
-            actions.to_unlabel.append("has_issue")
+            actions.to_unlabel.append(Label.HAS_ISSUE)
     elif isinstance(obj, Issue):
         if obj.has_pr:
-            actions.to_label.append("has_pr")
+            actions.to_label.append(Label.HAS_PR)
         else:
-            actions.to_unlabel.append("has_pr")
+            actions.to_unlabel.append(Label.HAS_PR)
 
 
 def needs_template(obj: GH_OBJ, actions: Actions) -> None:
@@ -1781,7 +1803,7 @@ def needs_template(obj: GH_OBJ, actions: Actions) -> None:
     ):
         return
     missing = []
-    if "bug" in actions.to_label:
+    if Label.BUG in actions.to_label:
         sections = ISSUE_BUG_TEMPLATE_SECTIONS
     else:
         sections = ISSUE_FEATURE_TEMPLATE_SECTIONS
@@ -1800,7 +1822,7 @@ def needs_template(obj: GH_OBJ, actions: Actions) -> None:
         missing.remove("Component Name")
 
     if missing:
-        actions.to_label.append("needs_template")
+        actions.to_label.append(Label.NEEDS_TEMPLATE)
         actions.close = True
         actions.comments.append(
             template_comment(
@@ -1854,9 +1876,9 @@ def networking(obj: GH_OBJ, actions: Actions) -> None:
         any(c.startswith(n) for n in NETWORK_PLUGIN_TYPE_DIRS) or c in NETWORK_FILES
         for c in obj.components
     ):
-        actions.to_label.append("networking")
+        actions.to_label.append(Label.NETWORKING)
     else:
-        actions.to_unlabel.append("networking")
+        actions.to_unlabel.append(Label.NETWORKING)
 
 
 def signed_commits(obj: GH_OBJ, actions: Actions) -> None:
@@ -1993,10 +2015,10 @@ def triage(
                 obj.number,
             )
             if force:
-                obj.add_labels(["bot_broken"])
+                obj.add_labels([Label.BOT_BROKEN])
             return
         if force:
-            obj.remove_labels(["bot_broken"])
+            obj.remove_labels([Label.BOT_BROKEN])
         if obj.is_command_applied("bot_skip"):
             obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
             logging.info(
@@ -2017,9 +2039,9 @@ def triage(
             break
 
     if actions.close:
-        actions.to_label.append("bot_closed")
+        actions.to_label.append(Label.BOT_CLOSED)
     else:
-        actions.to_unlabel.append("bot_closed")
+        actions.to_unlabel.append(Label.BOT_CLOSED)
 
     logging.info("All potential actions:")
     logging.info(pprint.pformat(actions))
@@ -2100,13 +2122,13 @@ class HeadRefForcePushedEvent(Event): ...
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LabeledEvent(Event):
-    label: str
+    label: Label
     author: str
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class UnlabeledEvent(Event):
-    label: str
+    label: Label
     author: str
 
 
@@ -2126,18 +2148,28 @@ def process_events(issue: dict[str, t.Any]) -> list[Event]:
         created_at = datetime.datetime.fromisoformat(node["createdAt"])
         match node["__typename"]:
             case "LabeledEvent":
+                try:
+                    label = Label(node["label"]["name"])
+                except ValueError:
+                    # bot does not understand this label, skip
+                    continue
                 rv.append(
                     LabeledEvent(
                         created_at=created_at,
-                        label=node["label"]["name"],
+                        label=label,
                         author=node["actor"]["login"],
                     )
                 )
             case "UnlabeledEvent":
+                try:
+                    label = Label(node["label"]["name"])
+                except ValueError:
+                    # bot does not understand this label, skip
+                    continue
                 rv.append(
                     UnlabeledEvent(
                         created_at=created_at,
-                        label=node["label"]["name"],
+                        label=label,
                         author=node["actor"]["login"],
                     )
                 )
