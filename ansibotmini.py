@@ -976,7 +976,7 @@ class Actions:
 type GH_OBJ = Issue | PR
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
 class TriageContext:
     collections_list: dict[str, t.Any] | None = None
     collections_file_map: dict[str, t.Any] | None = None
@@ -2108,32 +2108,32 @@ def triage(
     )
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
 class Event:
     created_at: datetime.datetime
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
 class ReopenedEvent(Event): ...
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
 class HeadRefForcePushedEvent(Event): ...
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
 class LabeledEvent(Event):
     label: Label
     author: str
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
 class UnlabeledEvent(Event):
     label: Label
     author: str
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
 class IssueCommentEvent(Event):
     body: str
     updated_at: datetime.datetime
