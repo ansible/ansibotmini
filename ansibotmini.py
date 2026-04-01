@@ -1759,8 +1759,7 @@ def needs_rebase(obj: GH_OBJ, actions: Actions) -> None:
         case "conflicting":
             actions.to_label.append(Label.NEEDS_REBASE)
         case "unknown":
-            logging.info("The mergeable state is unknown, will revisit")
-            actions.needs_revisit = True
+            raise SkipTriage("Skipping due to the mergeable state being unknown")
         case _:
             raise AssertionError(f"Unexpected mergeable value: '{obj.mergeable}'")
 
