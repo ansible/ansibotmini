@@ -861,12 +861,13 @@ class PR(Base):
         check_run = None
         non_azp_failures = False
         for cs in last_commit["checkSuites"]["nodes"]:
+            if not (cr := cs["checkRuns"]["nodes"]):
+                continue
             if cs.get("app", {}).get("name") == "Azure Pipelines":
-                check_run = cs["checkRuns"]["nodes"][0]
+                check_run = cr[0]
             else:
-                non_azp_failures |= (
-                    cs["checkRuns"]["nodes"][0]["conclusion"].lower() != "success"
-                )
+                if c := cr[0]["conclusion"]:
+                    non_azp_failures |= c.lower() != "success"
 
         if (
             check_run
