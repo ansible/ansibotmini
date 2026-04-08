@@ -399,7 +399,7 @@ commits(last: 100) {
           app {
             name
           }
-          checkRuns(last: 1) {
+          checkRuns(last: 5) {
             nodes {
               name
               detailsUrl
@@ -861,12 +861,21 @@ class PR(Base):
         check_run = None
         non_azp_failures = False
         for cs in last_commit["checkSuites"]["nodes"]:
-            if not (cr := cs["checkRuns"]["nodes"]):
+            if not (crs := cs["checkRuns"]["nodes"]):
                 continue
+            cr = sorted(
+                crs,
+                key=lambda x: (
+                    datetime.datetime.fromisoformat(x["completedAt"])
+                    if x["completedAt"]
+                    else NEVER
+                ),
+                reverse=True,
+            )[0]
             if cs.get("app", {}).get("name") == "Azure Pipelines":
-                check_run = cr[0]
+                check_run = cr
             else:
-                if c := cr[0]["conclusion"]:
+                if c := cr["conclusion"]:
                     non_azp_failures |= c.lower() != "success"
 
         if (
