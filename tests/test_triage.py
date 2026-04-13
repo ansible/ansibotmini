@@ -17,6 +17,7 @@ from ansibotmini import (
     needs_triage,
     networking,
     stale_pr,
+    match_object_type,
     match_version,
     waiting_on_contributor,
 )
@@ -122,7 +123,7 @@ def test_stale_pr_not_stale(monkeypatch):
     assert Label.STALE_PR in actions.to_unlabel
 
 
-def test_match_version(monkeypatch):
+def test_match_version():
     TriageContext._current = TriageContext(
         oldest_supported_bugfix_version=(2, 19),
         updated_at=datetime.datetime.now(tz=datetime.timezone.utc),
@@ -136,7 +137,7 @@ def test_match_version(monkeypatch):
     assert len(actions.comments) == 0
 
 
-def test_match_version_unsupported(monkeypatch):
+def test_match_version_unsupported():
     TriageContext._current = TriageContext(
         oldest_supported_bugfix_version=(2, 22),
         updated_at=datetime.datetime.now(tz=datetime.timezone.utc),
@@ -167,3 +168,36 @@ def test_waiting_on_contributor(monkeypatch):
     assert actions.close
     assert Label.WAITING_ON_CONTRIBUTOR in actions.to_unlabel
     assert len(actions.comments) == 1
+
+
+def test_match_object_type():
+    issue = Issue(**issue_kw)
+    issue.body = """##### SUMMARY\n\n##### ISSUE TYPE\n\n- Documentation Report"""
+    actions = Actions()
+    match_object_type(issue, actions)
+    assert Label.DOCS in actions.to_label
+
+
+def test_match_object_types():
+    issue = Issue(**issue_kw)
+    issue.body = """##### SUMMARY
+<!--- Describe the change below, including rationale and design decisions -->
+
+<!--- Add "Fixes #1234" or steps to reproduce the problem if there is no corresponding issue -->
+
+##### ISSUE TYPE
+
+<!--- Pick one below and delete the rest -->
+- Bugfix Pull Request
+- Docs Pull Request
+- Feature Pull Request
+- Test Pull Request
+"""
+    actions = Actions()
+    match_object_type(issue, actions)
+
+    assert len(actions.to_label) == 4
+    assert Label.BUG in actions.to_label
+    assert Label.DOCS in actions.to_label
+    assert Label.FEATURE in actions.to_label
+    assert Label.TEST in actions.to_label
