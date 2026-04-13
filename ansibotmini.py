@@ -147,6 +147,7 @@ class Label(enum.StrEnum):
     NEEDS_REVISION = "needs_revision"
     NEEDS_TEMPLATE = "needs_template"
     NEEDS_TRIAGE = "needs_triage"
+    NEEDS_VERIFIED = "needs_verified"
     NETWORKING = "networking"
     PENDING_CI = "pending_ci"
     PRE_AZP = "pre_azp"
@@ -438,6 +439,14 @@ closingIssuesReferences(last: 1) {
 """,
 )
 
+QUERY_REMOVE_LABELS = """
+mutation($input: RemoveLabelsFromLabelableInput!) {
+  removeLabelsFromLabelable(input:$input) {
+    clientMutationId
+  }
+}
+"""
+
 
 class TermInterrupt(Exception): ...
 
@@ -625,16 +634,9 @@ class Base:
         ):
             return
 
-        query = """
-        mutation($input: RemoveLabelsFromLabelableInput!) {
-          removeLabelsFromLabelable(input:$input) {
-            clientMutationId
-          }
-        }
-        """
         send_query(
             {
-                "query": query,
+                "query": QUERY_REMOVE_LABELS,
                 "variables": {
                     "input": {
                         "labelIds": label_ids,
@@ -2264,6 +2266,51 @@ def lock_closed_objects() -> None:
         logging.warning(ex)
 
 
+def unlabel_closed_objects(labels: list[Label]) -> None:
+    query_fmt = """
+        query {
+          search(query: "repo:ansible/ansible is:closed label:%s", type: ISSUE, first: 10) {
+            nodes {
+              ... on Issue { id number }
+              ... on PullRequest { id number }
+            }
+          }
+        }
+    """
+
+    for label in labels:
+        try:
+            resp = send_query({"query": query_fmt % label})
+            if nodes := resp.json()["data"]["search"]["nodes"]:
+                logging.info("Removing the %s label on closed issues/PRs", label)
+            else:
+                logging.info("No closed issues/PRs with the %s label", label)
+                continue
+
+            label_id = TriageContext.get().labels_to_ids_map[label]
+            for node in nodes:
+                logging.info("Removing the %s label on #%d", label, node["number"])
+                send_query(
+                    {
+                        "query": QUERY_REMOVE_LABELS,
+                        "variables": {
+                            "input": {
+                                "labelIds": [label_id],
+                                "labelableId": node["id"],
+                            },
+                        },
+                    }
+                )
+        except KeyError:
+            logging.warning(
+                "Skipping removing the %s label on issues/PRs due to incomplete data, the response was: '%s'",
+                label,
+                resp,
+            )
+        except SkipTriage as ex:
+            logging.warning(ex)
+
+
 def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
     open_numbers: list[int] = []
     for obj_name, query, fetch_func in (
@@ -2373,6 +2420,7 @@ def daemon(
 
         if force:
             lock_closed_objects()
+            unlabel_closed_objects([Label.NEEDS_TRIAGE, Label.NEEDS_VERIFIED])
 
         logging.info("Sleeping for %d minutes", sleep_seconds // 60)
         time.sleep(sleep_seconds)
