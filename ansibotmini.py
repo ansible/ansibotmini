@@ -993,11 +993,11 @@ type GH_OBJ = Issue | PR
 class TriageContext:
     collections_list: dict[str, t.Any] | None = None
     collections_file_map: dict[str, t.Any] | None = None
-    committers: list[str] = dataclasses.field(default_factory=list)
-    devel_file_list: list[str] = dataclasses.field(default_factory=list)
-    v29_file_list: list[str] = dataclasses.field(default_factory=list)
-    v29_flatten_modules: list[str] = dataclasses.field(default_factory=list)
-    collections_to_redirect: list[str] = dataclasses.field(default_factory=list)
+    committers: set[str] = dataclasses.field(default_factory=set)
+    devel_file_list: set[str] = dataclasses.field(default_factory=set)
+    v29_file_list: set[str] = dataclasses.field(default_factory=set)
+    v29_flatten_modules: set[str] = dataclasses.field(default_factory=set)
+    collections_to_redirect: set[str] = dataclasses.field(default_factory=set)
     labels_to_ids_map: dict[Label, str] = dataclasses.field(default_factory=dict)
     oldest_supported_bugfix_version: tuple[int, int] = (0, 0)
     updated_at: datetime.datetime = NEVER
@@ -1015,23 +1015,23 @@ class TriageContext:
 
     @classmethod
     def fetch(cls) -> t.Self:
-        devel_file_list = [
+        devel_file_list = set(
             e["path"]
             for e in http_request(
                 DEVEL_FILE_LIST, headers={"Authorization": f"Bearer {gh_token}"}
             ).json()["tree"]
-        ]
-        v29_file_list = [
+        )
+        v29_file_list = set(
             e["path"]
             for e in http_request(
                 V29_FILE_LIST, headers={"Authorization": f"Bearer {gh_token}"}
             ).json()["tree"]
-        ]
-        v29_flatten_modules = []
+        )
+        v29_flatten_modules = set()
         for f in v29_file_list:
             if f.startswith("lib/ansible/modules") and f.endswith((".py", ".ps1")):
                 if (possibly_flatten := flatten_module_path(f)) not in v29_file_list:
-                    v29_flatten_modules.append(possibly_flatten)
+                    v29_flatten_modules.add(possibly_flatten)
 
         collections_list = None
         collections_file_map = None
@@ -1050,7 +1050,7 @@ class TriageContext:
             devel_file_list=devel_file_list,
             v29_file_list=v29_file_list,
             v29_flatten_modules=v29_flatten_modules,
-            collections_to_redirect=(
+            collections_to_redirect=set(
                 http_request(COLLECTIONS_TO_REDIRECT_ENDPOINT)
                 .raw_data.decode()
                 .splitlines()
@@ -1186,7 +1186,7 @@ def get_label_id(name: Label) -> str:
         raise ValueError(f"Label {name!r} does not exist.")
 
 
-def get_committers() -> list[str]:
+def get_committers() -> set[str]:
     query = """
     query {
       organization(login: "ansible") {
@@ -1201,10 +1201,10 @@ def get_committers() -> list[str]:
     }
     """
     resp = send_query({"query": query})
-    return [
+    return set(
         n["login"]
         for n in resp.json()["data"]["organization"]["team"]["members"]["nodes"]
-    ]
+    )
 
 
 def process_component(data: str) -> list[str]:
@@ -1282,7 +1282,7 @@ COMPONENT_TO_FILENAME = {
 
 
 def match_existing_components(
-    filenames: list[str], existing_files: list[str]
+    filenames: list[str], existing_files: set[str]
 ) -> list[str]:
     if not filenames:
         return []

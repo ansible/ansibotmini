@@ -19,23 +19,23 @@ def ctx():
     return TriageContext(
         collections_list=collections_list,
         collections_file_map=collections_file_map,
-        committers=[],
-        devel_file_list=[],
-        v29_file_list=[
+        committers=set(),
+        devel_file_list=set(),
+        v29_file_list={
             "lib/ansible/modules/cloud/amazon/ec2_instance.py",
             "lib/ansible/plugins/action/patch.py",
-        ],
-        v29_flatten_modules=[
+        },
+        v29_flatten_modules={
             "lib/ansible/modules/ec2_instance.py",
             "lib/ansible/modules/vmware_guest_disk.py",
-        ],
-        collections_to_redirect=[
+        },
+        collections_to_redirect={
             "ansible.posix",
             "community.general",
             "community.vmware",
             "amazon.aws",
-        ],
-        oldest_supported_bugfix_version=[],
+        },
+        oldest_supported_bugfix_version=(2, 19),
         labels_to_ids_map={},
         updated_at=datetime.datetime.now(datetime.timezone.utc),
     )
@@ -86,6 +86,4 @@ def ctx():
 )
 def test_collection_redirect(in_component, out_component, expected):
     TriageContext._current = ctx()
-    assert sorted(is_in_collection([in_component])[out_component]) == sorted(
-        expected
-    )
+    assert sorted(is_in_collection([in_component])[out_component]) == sorted(expected)
