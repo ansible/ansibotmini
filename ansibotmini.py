@@ -2227,9 +2227,10 @@ def ratelimit_to_str(rate_limit: dict[str, t.Any]) -> str:
 
 
 def lock_closed_objects() -> None:
+    issues_to_query = 20
     query = """
     query {
-      search(query: "repo:ansible/ansible is:closed is:unlocked closed:<%s", type: ISSUE, first: 10) {
+      search(query: "repo:ansible/ansible is:closed is:unlocked closed:<%s", type: ISSUE, first: %d) {
         nodes {
           ... on Issue { id number locked }
           ... on PullRequest { id number locked }
@@ -2240,7 +2241,8 @@ def lock_closed_objects() -> None:
         (
             datetime.datetime.now(datetime.timezone.utc)
             - datetime.timedelta(days=LOCK_AFTER_CLOSE_DAYS)
-        ).strftime("%Y-%m-%d")
+        ).strftime("%Y-%m-%d"),
+        issues_to_query,
     )
 
     try:
@@ -2251,20 +2253,23 @@ def lock_closed_objects() -> None:
             logging.info("No issues/PRs to lock")
             return
 
-        if all(node["locked"] for node in nodes):
-            raise AssertionError(
-                f"All nodes are already locked. Incorrect data returned by the query, needs investigation."
-            )
-
+        already_locked_count = 0
         for node in nodes:
-            logging.info("Locking #%d", node["number"])
-            if not node["locked"]:
+            if node["locked"]:
+                already_locked_count += 1
+            else:
+                logging.info("Locking #%d", node["number"])
                 send_query(
                     {
                         "query": 'mutation { lockLockable(input: {lockableId: "%s", lockReason: RESOLVED}) { clientMutationId } }'
                         % node["id"]
                     }
                 )
+
+        if already_locked_count == issues_to_query:
+            raise AssertionError(
+                f"All nodes are already locked. Incorrect data returned by the query, needs investigation."
+            )
     except KeyError:
         logging.warning(
             "Skipping locking issues/PRs due to incomplete data, the response was: '%s'",
