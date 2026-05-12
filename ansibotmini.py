@@ -1796,7 +1796,6 @@ def stale_review(obj: GH_OBJ, actions: Actions) -> None:
 def pr_from_upstream(obj: GH_OBJ, actions: Actions) -> None:
     if not isinstance(obj, PR) or obj.from_repo != "ansible/ansible":
         return
-    actions.close = True
     actions.comments.append(
         template_comment("pr_from_upstream", {"author": obj.author})
     )
