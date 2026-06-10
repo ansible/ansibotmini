@@ -2408,6 +2408,10 @@ def daemon(
                     logging.warning(e)
                 else:
                     cache[obj.number] = obj.to_cache_entry()
+
+            if force:
+                lock_closed_objects()
+                unlabel_closed_objects([Label.NEEDS_TRIAGE, Label.NEEDS_VERIFIED])
         except AbortCurrentTriageAndWait:
             sleep_seconds = AbortCurrentTriageAndWait.wait_in_seconds
             logging.warning("Triage aborted due to network failures")
@@ -2429,10 +2433,6 @@ def daemon(
                 f"Took {time.time() - start:.2f} seconds and {_http_request_counter} HTTP requests to check for new/stale "
                 f"issues/PRs{f' and triage {n} of them.' if n else '.'}",
             )
-
-        if force:
-            lock_closed_objects()
-            unlabel_closed_objects([Label.NEEDS_TRIAGE, Label.NEEDS_VERIFIED])
 
         logging.info("Sleeping for %d minutes", sleep_seconds // 60)
         time.sleep(sleep_seconds)
