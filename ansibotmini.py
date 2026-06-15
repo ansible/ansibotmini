@@ -28,23 +28,12 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import typing as t
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import sentry_sdk  # type: ignore[import-not-found]
-except ImportError:
-    sentry_sdk = None
-
-try:
-    __version__ = subprocess.check_output(
-        ("git", "rev-parse", "HEAD"), text=True
-    ).strip()
-except subprocess.CalledProcessError:
-    __version__ = "unknown"
 
 minimal_required_python_version = (3, 13)
 if sys.version_info < minimal_required_python_version:
@@ -2498,21 +2487,38 @@ def main() -> None:
     config = configparser.ConfigParser()
     config.read(CONFIG_FILENAME)
 
-    if sentry_sdk is not None:
-        try:
-            sentry_dsn = config.get("default", "sentry_dsn")
-        except (configparser.NoSectionError, configparser.NoOptionError) as e:
-            logging.warning(
-                "Option 'sentry_dsn' in the configuration file is required to integrate sentry, "
-                "original error: %s",
-                e,
-            )
-        else:
-            sentry_sdk.init(
-                dsn=sentry_dsn,
-                attach_stacktrace=True,
-                release=__version__,
-            )
+    try:
+        slack_hook_url = config.get("default", "slack_hook_url")
+    except (configparser.NoSectionError, configparser.NoOptionError) as e:
+        logging.warning(
+            "Option 'slack_hook_url' in the configuration file is required to integrate with Slack, "
+            "original error: %s",
+            e,
+        )
+    else:
+
+        def custom_except_hook(exc_type, exc_value, exc_traceback):
+            try:
+                http_request(
+                    url=slack_hook_url,
+                    method="POST",
+                    headers={"Content-Type": "application/json"},
+                    data=json.dumps(
+                        {
+                            "exception": "".join(
+                                traceback.format_exception(
+                                    exc_type, exc_value, exc_traceback
+                                )
+                            )
+                        }
+                    ),
+                )
+            except Exception as e:
+                logging.error("Could not send the exception information to Slack")
+                logging.exception(e)
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+        sys.excepthook = custom_except_hook
 
     try:
         gh_token = config.get("default", "gh_token")
@@ -2551,7 +2557,7 @@ def main() -> None:
             sys.exit(0)
         except Exception as e:
             logging.exception(e)
-            sys.exit(1)
+            raise
 
 
 def generate_byfile_page(cache: dict[int, CacheEntry]):
