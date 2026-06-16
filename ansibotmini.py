@@ -121,6 +121,7 @@ class Label(enum.StrEnum):
     AFFECTS_2_19 = "affects_2.19"
     AFFECTS_2_20 = "affects_2.20"
     AFFECTS_2_21 = "affects_2.21"
+    AFFECTS_2_22 = "affects_2.22"
     BACKPORT = "backport"
     BOT_BROKEN = "bot_broken"
     BOT_CLOSED = "bot_closed"
