@@ -1491,8 +1491,10 @@ def needs_triage(obj: GH_OBJ, actions: Actions) -> None:
 
 
 def waiting_on_contributor(obj: GH_OBJ, actions: Actions) -> None:
-    if (labeled_date := obj.last_labeled(Label.WAITING_ON_CONTRIBUTOR)) and (
-        days_since(labeled_date) > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS
+    if (
+        Label.WAITING_ON_CONTRIBUTOR in obj.labels
+        and (labeled_date := obj.last_labeled(Label.WAITING_ON_CONTRIBUTOR))
+        and (days_since(labeled_date) > WAITING_ON_CONTRIBUTOR_CLOSE_DAYS)
     ):
         actions.close = True
         actions.to_unlabel.append(Label.WAITING_ON_CONTRIBUTOR)

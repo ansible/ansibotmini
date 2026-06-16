@@ -164,6 +164,7 @@ def test_waiting_on_contributor(monkeypatch):
             author="core",
         )
     ]
+    issue.labels.add(Label.WAITING_ON_CONTRIBUTOR)
     waiting_on_contributor(issue, actions)
     assert actions.close
     assert Label.WAITING_ON_CONTRIBUTOR in actions.to_unlabel
