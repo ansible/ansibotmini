@@ -368,6 +368,7 @@ QUERY_SINGLE_PR = QUERY_SINGLE_TMPL % (
     }
     """,
     """
+authorAssociation
 baseRef {
   name
 }
@@ -747,6 +748,7 @@ class PR(Base):
     has_issue: bool
     pushed_at: datetime.datetime
     all_commits_signed: bool
+    by_first_time_contributor: bool
 
     def close(self) -> None:
         try:
@@ -821,6 +823,10 @@ class PR(Base):
             "branch": o["baseRef"]["name"],
             "files": [f["path"] for f in o["files"]["nodes"]],
             "mergeable": o["mergeable"].lower(),
+            "by_first_time_contributor": bool(
+                o["authorAssociation"]
+                in ("FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "NONE")
+            ),
         }
         reviews = {}
         for review in reversed(o["reviews"]["nodes"]):
@@ -1907,6 +1913,44 @@ def signed_commits(obj: GH_OBJ, actions: Actions) -> None:
         )
 
 
+def first_time_contributor(obj: GH_OBJ, actions: Actions) -> None:
+    if not (isinstance(obj, PR) and obj.by_first_time_contributor):
+        return
+
+    # fetching user's PRs in a separate query
+    # fetching the same data as a part of the PR query wouldn't work for users with activity set to private
+    query_fmt = """
+        query {
+          search(query: "repo:ansible/ansible is:pr is:open author:%s", type: ISSUE, first: 50) {
+            nodes {
+              ... on PullRequest {
+                number
+              }
+            }
+          }
+        }
+    """
+
+    resp = send_query({"query": query_fmt % obj.author})
+    try:
+        oldest_pr_number = min(
+            node["number"] for node in resp.json()["data"]["search"]["nodes"]
+        )
+    except KeyError:
+        raise SkipTriage(
+            f"Skipping due to incomplete data received when fetching user's PR list, the response was: {resp!r}"
+        )
+
+    if obj.number > oldest_pr_number:
+        actions.comments.append(
+            template_comment(
+                "first_time_contributor",
+                {"author": obj.author, "oldest_pr_number": oldest_pr_number},
+            )
+        )
+        actions.close = True
+
+
 bot_funcs = [
     match_components,  # order matters, other funcs use detected components
     match_object_type,  # order matters, other funcs use detected object type
@@ -1930,6 +1974,7 @@ bot_funcs = [
     test_support_plugin,
     networking,
     signed_commits,
+    first_time_contributor,
 ]
 
 

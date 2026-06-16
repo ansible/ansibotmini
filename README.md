@@ -32,6 +32,7 @@
 * closes issues/PRs that relate to components that have been moved to collections, posts a comment with information about the new repository
 * warns submitters about unsigned commits in pull requests
 * comments on issues reported against unsupported versions of ansible-core
+* limits first-time contributors to only have one open pull request
 
 
 ### Labels
