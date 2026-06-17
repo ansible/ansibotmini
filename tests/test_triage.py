@@ -61,6 +61,7 @@ pr_kw = {
     "created_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
     "pushed_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
     "all_commits_signed": True,
+    "by_first_time_contributor": False,
 }
 
 
