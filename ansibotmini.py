@@ -375,6 +375,7 @@ baseRef {
 files(first: 50) {
   nodes {
     path
+    changeType
   }
 }
 commits(last: 100) {
@@ -749,6 +750,7 @@ class PR(Base):
     pushed_at: datetime.datetime
     all_commits_signed: bool
     by_first_time_contributor: bool
+    outdated: bool
 
     def close(self) -> None:
         try:
@@ -781,6 +783,7 @@ class PR(Base):
             last_triaged_at=self.last_triaged_at,
             last_committed_at=self.last_committed_at,
             pushed_at=self.pushed_at,
+            outdated=self.outdated,
         )
 
     @classmethod
@@ -826,6 +829,11 @@ class PR(Base):
             "by_first_time_contributor": bool(
                 o["authorAssociation"]
                 in ("FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "NONE")
+            ),
+            "outdated": any(
+                f["changeType"] == "MODIFIED"
+                and f["path"] not in TriageContext.get().devel_file_list
+                for f in o["files"]["nodes"]
             ),
         }
         reviews = {}
@@ -1072,6 +1080,7 @@ class IssueCacheEntry:
 class PRCacheEntry(IssueCacheEntry):
     last_committed_at: datetime.datetime
     pushed_at: datetime.datetime
+    outdated: bool
 
 
 type CacheEntry = IssueCacheEntry | PRCacheEntry
@@ -2610,12 +2619,29 @@ def main() -> None:
 
 def generate_byfile_page(cache: dict[int, CacheEntry]):
     logging.info("Generating %s", BYFILE_PAGE_FILENAME)
+    outdated_prs = []
     component_to_numbers = collections.defaultdict(list)
     for number, entry in cache.items():
+        if isinstance(entry, PRCacheEntry):
+            if entry.outdated:
+                outdated_prs.append((number, entry))
+
         for component in entry.components:
             component_to_numbers[component].append((number, entry))
 
     data = []
+    if outdated_prs:
+        data.append(
+            f'<div style="background-color: #cfc; padding: 10px; border: 1px solid green;" id="{component}">\n'
+            f"<b>Pull requests modifying deleted files {len(outdated_prs)} total</b>\n"
+            "</div><br />\n"
+        )
+        for number, entry in outdated_prs:
+            data.append(
+                f'<a href="{entry.url}">#{number}</a>&emsp;{html.escape(entry.title)}<br />\n'
+            )
+        data.append("<br />\n")
+
     for idx, (component, issues) in enumerate(
         sorted(component_to_numbers.items(), key=lambda x: len(x[1]), reverse=True),
         start=1,
