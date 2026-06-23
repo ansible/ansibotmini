@@ -57,9 +57,9 @@ AZP_BUILD_ID_RE = re.compile(
 ANSIBLE_CORE_PYPI_URL = "https://pypi.org/pypi/ansible-core/json"
 GALAXY_URL = "https://galaxy.ansible.com/"
 GITHUB_GRAPHQL_URL = "https://api.github.com/graphql"
-COLLECTIONS_LIST_ENDPOINT = "https://sivel.eng.ansible.com/api/v1/collections/list"
+COLLECTIONS_LIST_ENDPOINT = "https://sivel.core.ansible.com/api/v1/collections/list"
 COLLECTIONS_FILEMAP_ENDPOINT = (
-    "https://sivel.eng.ansible.com/api/v1/collections/file_map"
+    "https://sivel.core.ansible.com/api/v1/collections/file_map"
 )
 COLLECTIONS_TO_REDIRECT_ENDPOINT = "https://raw.githubusercontent.com/ansible-community/ansible-build-data/main/15/ansible.in"
 DEVEL_FILE_LIST = (
