@@ -18,7 +18,8 @@ import io
 import itertools
 import json
 import logging
-import os.path
+import os
+import pathlib
 import pickle
 import pprint
 import re
@@ -79,9 +80,9 @@ LOCK_AFTER_CLOSE_DAYS = 14
 SLEEP_SECONDS = 300
 NEVER = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
 
-CONFIG_FILENAME = os.path.expanduser("~/.ansibotmini.cfg")
-CACHE_FILENAME = os.path.expanduser("~/.ansibotmini_cache.pickle")
-BYFILE_PAGE_FILENAME = os.path.expanduser("~/byfile.html")
+CONFIG_FILENAME = pathlib.Path.home() / ".ansibotmini.cfg"
+CACHE_FILENAME = pathlib.Path.home() / ".ansibotmini_cache.pickle"
+BYFILE_PAGE_FILENAME = pathlib.Path.home() / "byfile.html"
 
 COMPONENT_RE = re.compile(
     r"#{3,5}\scomponent\sname(.+?)(?=#{3,5}|$)", flags=re.IGNORECASE | re.DOTALL
@@ -1260,7 +1261,7 @@ def template_comment(template_name: str, sub_map: dict | None = None) -> str:
     if sub_map is None:
         sub_map = {}
     with open(
-        os.path.join(os.path.dirname(__file__), "templates", f"{template_name}.tmpl")
+        pathlib.Path(__file__).parent / "templates" / f"{template_name}.tmpl"
     ) as f:
         rv = string.Template(f.read()).substitute(sub_map)
     return rv
