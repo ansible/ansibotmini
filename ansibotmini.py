@@ -25,7 +25,6 @@ import pprint
 import re
 import signal
 import string
-import subprocess
 import sys
 import tempfile
 import time
@@ -1216,9 +1215,9 @@ def get_committers() -> set[str]:
 def process_component(data: str) -> list[str]:
     rv = []
     for line in (
-        l
-        for l in data.strip("\t\n\r").splitlines()
-        if l and not ("<!--" in l or "-->" in l)
+        line
+        for line in data.strip("\t\n\r").splitlines()
+        if line and not ("<!--" in line or "-->" in line)
     ):
         for comma_split in line.split(","):
             space_split = comma_split.split(" ")
@@ -1495,7 +1494,7 @@ def get_collection_redirection_comment(components: list[str]) -> str | None:
         return None
 
     lines = [
-        f"* {component} -> {ctx.collections_list[fqcn]["manifest"]["collection_info"]["repository"]} ({GALAXY_URL}{fqcn})"
+        f"* {component} -> {ctx.collections_list[fqcn]['manifest']['collection_info']['repository']} ({GALAXY_URL}{fqcn})"
         for component, fqcns in component_to_fqcns_map.items()
         for fqcn in fqcns
     ]
@@ -1611,7 +1610,7 @@ def _sanitize_ci_comment(body: str) -> str:
     if len(body) <= max_comment_len:
         return body
     omitted_msg = "... [omitted, message too long]"
-    return f"{body[:max_comment_len - len(omitted_msg)]}{omitted_msg}"
+    return f"{body[: max_comment_len - len(omitted_msg)]}{omitted_msg}"
 
 
 def ci_comments(obj: GH_OBJ, actions: Actions) -> None:
@@ -2113,21 +2112,21 @@ def triage(
     logging.info(pprint.pformat(actions))
 
     actions.to_label = [
-        l
-        for l in actions.to_label
-        if l not in obj.labels
+        label
+        for label in actions.to_label
+        if label not in obj.labels
         and not (
-            (l in LABELS_DO_NOT_OVERRIDE or l.startswith("affects_"))
-            and obj.was_unlabeled_by_human(l)
+            (label in LABELS_DO_NOT_OVERRIDE or label.startswith("affects_"))
+            and obj.was_unlabeled_by_human(label)
         )
     ]
     actions.to_unlabel = [
-        l
-        for l in actions.to_unlabel
-        if l in obj.labels
+        label
+        for label in actions.to_unlabel
+        if label in obj.labels
         and not (
-            (l in LABELS_DO_NOT_OVERRIDE or l.startswith("affects_"))
-            and obj.was_labeled_by_human(l)
+            (label in LABELS_DO_NOT_OVERRIDE or label.startswith("affects_"))
+            and obj.was_labeled_by_human(label)
         )
     ]
 
@@ -2314,7 +2313,7 @@ def lock_closed_objects() -> None:
 
         if already_locked_count == issues_to_query:
             raise AssertionError(
-                f"All nodes are already locked. Incorrect data returned by the query, needs investigation."
+                "All nodes are already locked. Incorrect data returned by the query, needs investigation."
             )
     except KeyError:
         logging.warning(
