@@ -1093,8 +1093,12 @@ def http_request(
     method: t.Literal["GET", "POST", "PATCH"] = "GET",
     retries: int = 3,
 ) -> Response:
-    if headers is None:
-        headers = {}
+    request = urllib.request.Request(
+        url,
+        data=data.encode("ascii"),
+        headers={} if headers is None else headers,
+        method=method.upper(),
+    )
 
     wait_seconds = 10
     error_msg: str = "Unexpected error during retrying http request"
@@ -1108,14 +1112,7 @@ def http_request(
                 method,
                 url,
             )
-            with urllib.request.urlopen(
-                urllib.request.Request(
-                    url,
-                    data=data.encode("ascii"),
-                    headers=headers,
-                    method=method.upper(),
-                ),
-            ) as response:
+            with urllib.request.urlopen(request) as response:
                 logging.info(
                     "response: %d, %s",
                     response.status,
@@ -1635,11 +1632,16 @@ def ci_comments(obj: GH_OBJ, actions: Actions) -> None:
         return
     ci_comment = []
     ci_verifieds = []
-    for url in (
-        a["resource"]["downloadUrl"]
-        for a in http_request(AZP_ARTIFACTS_URL_FMT % obj.ci.build_id).json()["value"]
-        if a["name"].startswith("Bot ") and a["source"] in failed_job_ids
-    ):
+    resp = http_request(AZP_ARTIFACTS_URL_FMT % obj.ci.build_id)
+    try:
+        urls = [
+            a["resource"]["downloadUrl"]
+            for a in resp.json()["value"]
+            if a["name"].startswith("Bot ") and a["source"] in failed_job_ids
+        ]
+    except KeyError:
+        raise SkipTriage("Skipping due to incomplete data received from AZP.")
+    for url in urls:
         zfile = zipfile.ZipFile(io.BytesIO(http_request(url).raw_data))
         for filename in zfile.namelist():
             if "ansible-test-" not in filename:
