@@ -2274,7 +2274,7 @@ def ratelimit_to_str(rate_limit: dict[str, t.Any]) -> str:
 
 
 def lock_closed_objects() -> None:
-    issues_to_query = 20
+    issues_to_query = 50
     query = """
     query {
       search(query: "repo:ansible/ansible is:closed is:unlocked closed:<%s", type: ISSUE, first: %d) {
