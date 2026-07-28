@@ -3,25 +3,22 @@ import datetime
 import pytest
 
 from ansibotmini import (
+    CI,
+    PR,
+    STALE_PR_DAYS,
+    WAITING_ON_CONTRIBUTOR_CLOSE_DAYS,
     Actions,
     Issue,
     Label,
-    PR,
     LabeledEvent,
-    STALE_PR_DAYS,
-    WAITING_ON_CONTRIBUTOR_CLOSE_DAYS,
-    CI,
     TriageContext,
-)
-from ansibotmini import (
+    match_object_type,
+    match_version,
     needs_triage,
     networking,
     stale_pr,
-    match_object_type,
-    match_version,
     waiting_on_contributor,
 )
-
 
 issue_kw = {
     "id": "id",

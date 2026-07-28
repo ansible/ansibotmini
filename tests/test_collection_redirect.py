@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from ansibotmini import is_in_collection, TriageContext
+from ansibotmini import TriageContext, is_in_collection
 
 
 def ctx():
