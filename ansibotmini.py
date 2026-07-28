@@ -38,7 +38,7 @@ import zipfile
 minimal_required_python_version = (3, 13)
 if sys.version_info < minimal_required_python_version:
     raise SystemExit(
-        f"ansibotmini requires Python {'.'.join((str(e) for e in minimal_required_python_version))} or newer. "
+        f"ansibotmini requires Python {'.'.join(str(e) for e in minimal_required_python_version)} or newer. "
         f"Python version detected: {sys.version.split(' ', maxsplit=1)[0]}"
     )
 
@@ -451,6 +451,9 @@ def sigterm_handler(signum, frame):
 _http_request_counter = 0
 
 
+logger = logging.getLogger(__name__)
+
+
 class AbortCurrentTriageAndWait(Exception):
     """Abort the current triage run due to failures accumulated during the run likely due to the external services being down."""
 
@@ -472,7 +475,7 @@ class SkipTriage(Exception):
         def in_last_five_minutes(dt: datetime.datetime) -> bool:
             return (now - dt).total_seconds() <= 60 * 5
 
-        if sum((1 for dt in SkipTriage.failures if in_last_five_minutes(dt))) >= 5:
+        if sum(1 for dt in SkipTriage.failures if in_last_five_minutes(dt)) >= 5:
             raise AbortCurrentTriageAndWait
 
 
@@ -665,7 +668,7 @@ class Issue(Base):
     has_pr: bool
 
     def close(self) -> None:
-        logging.info("Closing issue #%d", self.number)
+        logger.info("Closing issue #%d", self.number)
         query = """
         mutation($input: CloseIssueInput!) {
           closeIssue(input:$input) {
@@ -695,7 +698,7 @@ class Issue(Base):
 
     @classmethod
     def fetch(cls, number: int) -> t.Self:
-        logging.info("Getting issue #%d", number)
+        logger.info("Getting issue #%d", number)
         resp = send_query(
             {"query": QUERY_SINGLE_ISSUE, "variables": {"number": number}}
         )
@@ -707,7 +710,7 @@ class Issue(Base):
                 f"Skipping due to incomplete data received when fetching the issue, the response was: {resp!r}"
             )
 
-        logging.info(ratelimit_to_str(data["rateLimit"]))
+        logger.info(ratelimit_to_str(data["rateLimit"]))
         o = data["repository"]["issue"]
         if o is None:
             raise ValueError(f"{number} not found")
@@ -756,7 +759,7 @@ class PR(Base):
         try:
             self.ci.cancel()
         finally:
-            logging.info("Closing PR #%d", self.number)
+            logger.info("Closing PR #%d", self.number)
             query = """
             mutation($input: ClosePullRequestInput!) {
               closePullRequest(input:$input) {
@@ -788,7 +791,7 @@ class PR(Base):
 
     @classmethod
     def fetch(cls, number: int) -> t.Self:
-        logging.info("Getting PR #%d", number)
+        logger.info("Getting PR #%d", number)
         resp = send_query({"query": QUERY_SINGLE_PR, "variables": {"number": number}})
 
         try:
@@ -798,7 +801,7 @@ class PR(Base):
                 f"Skipping due to incomplete data received when fetching the PR, the response was: {resp!r}"
             )
 
-        logging.info(ratelimit_to_str(data["rateLimit"]))
+        logger.info(ratelimit_to_str(data["rateLimit"]))
         o = data["repository"]["pullRequest"]
         if o is None:
             raise ValueError(f"{number} not found")
@@ -870,15 +873,14 @@ class PR(Base):
         for cs in last_commit["checkSuites"]["nodes"]:
             if not (crs := cs["checkRuns"]["nodes"]):
                 continue
-            cr = sorted(
+            cr = max(
                 crs,
                 key=lambda x: (
                     datetime.datetime.fromisoformat(x["completedAt"])
                     if x["completedAt"]
                     else NEVER
                 ),
-                reverse=True,
-            )[0]
+            )
             if cs.get("app", {}).get("name") == "Azure Pipelines":
                 check_run = cr
             else:
@@ -946,7 +948,7 @@ class CI:
 
     def cancel(self) -> None:
         if self.build_id is not None and self.completed_at is None:
-            logging.info("Cancelling CI buildId %d", self.build_id)
+            logger.info("Cancelling CI buildId %d", self.build_id)
             resp = http_request(
                 url=AZP_BUILD_URL_FMT % self.build_id,
                 method="PATCH",
@@ -958,7 +960,7 @@ class CI:
                 },
                 data=json.dumps({"status": "Cancelling"}),
             )
-            logging.info("Cancelled with status_code: %d", resp.status_code)
+            logger.info("Cancelled with status_code: %d", resp.status_code)
 
     def is_long_running(self, *, hours: int) -> bool:
         return (
@@ -1011,7 +1013,7 @@ class TriageContext:
     @classmethod
     def get(cls) -> TriageContext:
         if days_since(cls._current.updated_at) >= 2:
-            logging.info(
+            logger.info(
                 "Triage context is stale (more than 2 days old), fetching new data..."
             )
             cls._current = TriageContext.fetch()
@@ -1019,23 +1021,25 @@ class TriageContext:
 
     @classmethod
     def fetch(cls) -> t.Self:
-        devel_file_list = set(
+        devel_file_list = {
             e["path"]
             for e in http_request(
                 DEVEL_FILE_LIST, headers={"Authorization": f"Bearer {gh_token}"}
             ).json()["tree"]
-        )
-        v29_file_list = set(
+        }
+        v29_file_list = {
             e["path"]
             for e in http_request(
                 V29_FILE_LIST, headers={"Authorization": f"Bearer {gh_token}"}
             ).json()["tree"]
-        )
-        v29_flatten_modules = set()
-        for f in v29_file_list:
-            if f.startswith("lib/ansible/modules") and f.endswith((".py", ".ps1")):
-                if (possibly_flatten := flatten_module_path(f)) not in v29_file_list:
-                    v29_flatten_modules.add(possibly_flatten)
+        }
+        v29_flatten_modules = {
+            possibly_flatten
+            for f in v29_file_list
+            if f.startswith("lib/ansible/modules")
+            and f.endswith((".py", ".ps1"))
+            and (possibly_flatten := flatten_module_path(f)) not in v29_file_list
+        }
 
         collections_list = None
         collections_file_map = None
@@ -1043,9 +1047,9 @@ class TriageContext:
             collections_list = http_request(COLLECTIONS_LIST_ENDPOINT).json()
             collections_file_map = http_request(COLLECTIONS_FILEMAP_ENDPOINT).json()
         except urllib.error.HTTPError as e:
-            logging.error("%s: %d %s", e.url, e.status, e.reason)
+            logger.error("%s: %d %s", e.url, e.status, e.reason)
         except (TimeoutError, urllib.error.URLError) as e:
-            logging.error("%s: %s", COLLECTIONS_LIST_ENDPOINT, e)
+            logger.error("%s: %s", COLLECTIONS_LIST_ENDPOINT, e)
 
         return cls(
             collections_list=collections_list,
@@ -1106,14 +1110,14 @@ def http_request(
         try:
             global _http_request_counter
             _http_request_counter += 1
-            logging.info(
+            logger.info(
                 "http request no. %d: %s %s",
                 _http_request_counter,
                 method,
                 url,
             )
             with urllib.request.urlopen(request) as response:
-                logging.info(
+                logger.info(
                     "response: %d, %s",
                     response.status,
                     response.reason,
@@ -1125,11 +1129,11 @@ def http_request(
                 )
         except urllib.error.HTTPError as e:
             error_msg = str(e)
-            logging.info(e)
+            logger.info(e)
             # NOTE it appears GitHub sometimes returns "401 Unauthorized" incorrectly?
             if e.status is not None and (e.status >= 500 or e.status == 401):
                 if i < retries - 1:
-                    logging.info(
+                    logger.info(
                         "Waiting for %d seconds and retrying the request...",
                         wait_seconds,
                     )
@@ -1142,9 +1146,9 @@ def http_request(
                 )
         except (ConnectionError, TimeoutError, urllib.error.URLError) as e:
             error_msg = str(e)
-            logging.info(e)
+            logger.info(e)
             if i < retries - 1:
-                logging.info(
+                logger.info(
                     "Waiting for %d seconds and retrying the request...", wait_seconds
                 )
                 time.sleep(wait_seconds)
@@ -1203,10 +1207,10 @@ def get_committers() -> set[str]:
     }
     """
     resp = send_query({"query": query})
-    return set(
+    return {
         n["login"]
         for n in resp.json()["data"]["organization"]["team"]["members"]["nodes"]
-    )
+    }
 
 
 def process_component(data: str) -> list[str]:
@@ -1296,7 +1300,7 @@ def match_existing_components(
         "lib/ansible/executor/",
         "lib/ansible/vars/",
     ]
-    paths.extend((f"lib/ansible/plugins/{name}/" for name in ANSIBLE_PLUGINS))
+    paths.extend(f"lib/ansible/plugins/{name}/" for name in ANSIBLE_PLUGINS)
     files = set()
     for filename in filenames:
         if filename == "core":
@@ -1368,9 +1372,7 @@ def match_components(obj: GH_OBJ, actions: Actions) -> None:
                     if path in existing_components:
                         existing_components.remove(path)
                 case _:
-                    logging.info(
-                        "Incorrect operation for the component command: %s", op
-                    )
+                    logger.info("Incorrect operation for the component command: %s", op)
 
         post_comments_banner = True
         if not existing_components and (
@@ -1421,7 +1423,7 @@ def match_components(obj: GH_OBJ, actions: Actions) -> None:
 
     obj.components = existing_components
 
-    logging.info(
+    logger.info(
         "%s #%d: identified components: %s",
         obj.__class__.__name__,
         obj.number,
@@ -1574,31 +1576,32 @@ def match_object_type(obj: GH_OBJ, actions: Actions) -> None:
 def match_version(obj: GH_OBJ, actions: Actions) -> None:
     if isinstance(obj, PR):
         return
-    if match := VERSION_RE.search(obj.body):
-        if match := VERSION_OUTPUT_RE.search(match.group(1)):
-            version = tuple(int(c) for c in match.group(1).split(".")[:2])
-            version_s = f"{version[0]}.{version[1]}"
-            try:
-                actions.to_label.append(Label(f"affects_{version_s}"))
-            except ValueError:
-                # version outside what is defined in Label, skip
-                # if it is older, meh
-                # if it is newer, the label needs to be created first
-                return
-            if (
-                obj.is_new()  # prevent spamming half the repo
-                and Label.BUG in actions.to_label
-                and version < TriageContext.get().oldest_supported_bugfix_version
-            ):
-                actions.comments.append(
-                    template_comment(
-                        "unsupported_version",
-                        {
-                            "author": obj.author,
-                            "version_reported": version_s,
-                        },
-                    )
+    if (match := VERSION_RE.search(obj.body)) and (
+        match := VERSION_OUTPUT_RE.search(match.group(1))
+    ):
+        version = tuple(int(c) for c in match.group(1).split(".")[:2])
+        version_s = f"{version[0]}.{version[1]}"
+        try:
+            actions.to_label.append(Label(f"affects_{version_s}"))
+        except ValueError:
+            # version outside what is defined in Label, skip
+            # if it is older, meh
+            # if it is newer, the label needs to be created first
+            return
+        if (
+            obj.is_new()  # prevent spamming half the repo
+            and Label.BUG in actions.to_label
+            and version < TriageContext.get().oldest_supported_bugfix_version
+        ):
+            actions.comments.append(
+                template_comment(
+                    "unsupported_version",
+                    {
+                        "author": obj.author,
+                        "version_reported": version_s,
+                    },
                 )
+            )
 
 
 def _sanitize_ci_comment(body: str) -> str:
@@ -1726,7 +1729,7 @@ def needs_ci(obj: GH_OBJ, actions: Actions) -> None:
     ):
         if Label.PRE_AZP not in obj.labels:
             actions.to_label.append(Label.NEEDS_CI)
-            logging.info(
+            logger.info(
                 "Adding needs_ci: PR created_at: '%s', PR pushed at: '%s', PR CI: '%s'",
                 obj.created_at,
                 obj.pushed_at,
@@ -1838,7 +1841,7 @@ def needs_template(obj: GH_OBJ, actions: Actions) -> None:
     for section in sections:
         if (
             re.search(
-                r"^#{3,5}\s*%s\s*$" % section,
+                rf"^#{{3,5}}\s*{section}\s*$",
                 obj.body,
                 flags=re.IGNORECASE | re.MULTILINE,
             )
@@ -1857,7 +1860,7 @@ def needs_template(obj: GH_OBJ, actions: Actions) -> None:
                 "issue_missing_data",
                 {
                     "author": obj.author,
-                    "missing_sections": "\n".join((f"- {s}" for s in missing)),
+                    "missing_sections": "\n".join(f"- {s}" for s in missing),
                 },
             )
         )
@@ -2046,8 +2049,8 @@ def triage(
     ask: bool = False,
     ignore_bot_skip: bool = False,
 ) -> None:
-    logging.info("Triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number)
-    logging.info(obj.url)
+    logger.info("Triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number)
+    logger.info(obj.url)
 
     # commands
     bodies = itertools.chain(
@@ -2075,7 +2078,7 @@ def triage(
     if not ignore_bot_skip:
         if obj.is_command_applied("bot_broken"):
             obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
-            logging.info(
+            logger.info(
                 "Skipping %s %s (#%d) due to bot_broken",
                 obj.__class__.__name__,
                 obj.title,
@@ -2088,7 +2091,7 @@ def triage(
             obj.remove_labels([Label.BOT_BROKEN])
         if obj.is_command_applied("bot_skip"):
             obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
-            logging.info(
+            logger.info(
                 "Skipping %s %s (#%d) due to bot_skip",
                 obj.__class__.__name__,
                 obj.title,
@@ -2110,8 +2113,8 @@ def triage(
     else:
         actions.to_unlabel.append(Label.BOT_CLOSED)
 
-    logging.info("All potential actions:")
-    logging.info(pprint.pformat(actions))
+    logger.info("All potential actions:")
+    logger.info(pprint.pformat(actions))
 
     actions.to_label = [
         label
@@ -2139,8 +2142,8 @@ def triage(
 
     if force or ask:
         if actions:
-            logging.info("Summary of actions to take:")
-            logging.info(pprint.pformat(actions))
+            logger.info("Summary of actions to take:")
+            logger.info(pprint.pformat(actions))
 
             take_actions = True
             if ask:
@@ -2160,16 +2163,16 @@ def triage(
                 if actions.close:
                     obj.close()
             else:
-                logging.info("Skipping taking actions per user input")
+                logger.info("Skipping taking actions per user input")
         else:
-            logging.info("No actions to take")
+            logger.info("No actions to take")
     else:
-        logging.info("Skipping taking actions")
+        logger.info("Skipping taking actions")
 
     if not actions.needs_revisit:
         obj.last_triaged_at = datetime.datetime.now(datetime.timezone.utc)
 
-    logging.info(
+    logger.info(
         "Done triaging %s %s (#%d)", obj.__class__.__name__, obj.title, obj.number
     )
 
@@ -2274,30 +2277,36 @@ def ratelimit_to_str(rate_limit: dict[str, t.Any]) -> str:
 
 
 def lock_closed_objects() -> None:
+    date = (
+        datetime.datetime.now(datetime.timezone.utc)
+        - datetime.timedelta(days=LOCK_AFTER_CLOSE_DAYS)
+    ).strftime("%Y-%m-%d")
     issues_to_query = 50
     query = """
-    query {
-      search(query: "repo:ansible/ansible is:closed is:unlocked closed:<%s", type: ISSUE, first: %d) {
-        nodes {
-          ... on Issue { id number locked }
-          ... on PullRequest { id number locked }
+        query($q: String!, $issues_count: Int!) {
+          search(query: $q, type: ISSUE, first: $issues_count) {
+            nodes {
+              ... on Issue { id number locked }
+              ... on PullRequest { id number locked }
+            }
+          }
         }
-      }
-    }
-    """ % (
-        (
-            datetime.datetime.now(datetime.timezone.utc)
-            - datetime.timedelta(days=LOCK_AFTER_CLOSE_DAYS)
-        ).strftime("%Y-%m-%d"),
-        issues_to_query,
-    )
+    """
 
     try:
-        resp = send_query({"query": query})
+        resp = send_query(
+            {
+                "query": query,
+                "variables": {
+                    "q": f"repo:ansible/ansible is:closed is:unlocked closed:<{date}",
+                    "issues_count": issues_to_query,
+                },
+            }
+        )
         if nodes := resp.json()["data"]["search"]["nodes"]:
-            logging.info("Locking closed old issues/PRs")
+            logger.info("Locking closed old issues/PRs")
         else:
-            logging.info("No issues/PRs to lock")
+            logger.info("No issues/PRs to lock")
             return
 
         already_locked_count = 0
@@ -2305,11 +2314,16 @@ def lock_closed_objects() -> None:
             if node["locked"]:
                 already_locked_count += 1
             else:
-                logging.info("Locking #%d", node["number"])
+                logger.info("Locking #%d", node["number"])
                 send_query(
                     {
-                        "query": 'mutation { lockLockable(input: {lockableId: "%s", lockReason: RESOLVED}) { clientMutationId } }'
-                        % node["id"]
+                        "query": "mutation LockIssue($input: LockLockableInput!) {lockLockable(input: $input) {clientMutationId}}",
+                        "variables": {
+                            "input": {
+                                "lockableId": node["id"],
+                                "lockReason": "RESOLVED",
+                            }
+                        },
                     }
                 )
 
@@ -2318,12 +2332,12 @@ def lock_closed_objects() -> None:
                 "All nodes are already locked. Incorrect data returned by the query, needs investigation."
             )
     except KeyError:
-        logging.warning(
+        logger.warning(
             "Skipping locking issues/PRs due to incomplete data, the response was: '%s'",
             resp,
         )
     except SkipTriage as ex:
-        logging.warning(ex)
+        logger.warning(ex)
 
 
 def unlabel_closed_objects(labels: list[Label]) -> None:
@@ -2342,14 +2356,14 @@ def unlabel_closed_objects(labels: list[Label]) -> None:
         try:
             resp = send_query({"query": query_fmt % label})
             if nodes := resp.json()["data"]["search"]["nodes"]:
-                logging.info("Removing the %s label on closed issues/PRs", label)
+                logger.info("Removing the %s label on closed issues/PRs", label)
             else:
-                logging.info("No closed issues/PRs with the %s label", label)
+                logger.info("No closed issues/PRs with the %s label", label)
                 continue
 
             label_id = TriageContext.get().labels_to_ids_map[label]
             for node in nodes:
-                logging.info("Removing the %s label on #%d", label, node["number"])
+                logger.info("Removing the %s label on #%d", label, node["number"])
                 send_query(
                     {
                         "query": QUERY_REMOVE_LABELS,
@@ -2362,13 +2376,13 @@ def unlabel_closed_objects(labels: list[Label]) -> None:
                     }
                 )
         except KeyError:
-            logging.warning(
+            logger.warning(
                 "Skipping removing the %s label on issues/PRs due to incomplete data, the response was: '%s'",
                 label,
                 resp,
             )
         except SkipTriage as ex:
-            logging.warning(ex)
+            logger.warning(ex)
 
 
 def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
@@ -2379,22 +2393,22 @@ def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
     ):
         variables: dict[str, t.Any] = {}
         while True:
-            logging.info("Getting open %s", obj_name)
+            logger.info("Getting open %s", obj_name)
             try:
                 resp = send_query({"query": query, "variables": variables})
             except SkipTriage as ex:
-                logging.warning(ex)
+                logger.warning(ex)
                 break
 
             try:
                 data = resp.json()["data"]
             except KeyError:
-                logging.warning(
+                logger.warning(
                     "Skipping triage due to incomplete data received when fetching data, the response was: '%s'",
                     resp,
                 )
                 break
-            logging.info(ratelimit_to_str(data["rateLimit"]))
+            logger.info(ratelimit_to_str(data["rateLimit"]))
 
             objs = data["repository"][obj_name]
             for node in objs["nodes"]:
@@ -2417,7 +2431,7 @@ def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
                     try:
                         yield fetch_func(number)
                     except SkipTriage as ex:
-                        logging.warning(ex)
+                        logger.warning(ex)
 
             if objs["pageInfo"]["hasNextPage"]:
                 variables["after"] = objs["pageInfo"]["endCursor"]
@@ -2440,11 +2454,11 @@ def daemon(
         with open(CACHE_FILENAME, "rb") as cf:
             cache = pickle.load(cf)
     except (OSError, EOFError) as e:
-        logging.info("Could not use cache: '%s'", e)
+        logger.info("Could not use cache: '%s'", e)
 
     while True:
         sleep_seconds = SLEEP_SECONDS
-        logging.info("Starting triage")
+        logger.info("Starting triage")
         _http_request_counter = 0
         start = time.time()
         n = 0
@@ -2453,7 +2467,7 @@ def daemon(
                 try:
                     triage(obj, force, ask, ignore_bot_skip)
                 except SkipTriage as e:
-                    logging.warning(e)
+                    logger.warning(e)
                 else:
                     cache[obj.number] = obj.to_cache_entry()
 
@@ -2462,7 +2476,7 @@ def daemon(
                 unlabel_closed_objects([Label.NEEDS_TRIAGE, Label.NEEDS_VERIFIED])
         except AbortCurrentTriageAndWait:
             sleep_seconds = AbortCurrentTriageAndWait.wait_in_seconds
-            logging.warning("Triage aborted due to network failures")
+            logger.warning("Triage aborted due to network failures")
         finally:
             if n:
                 with tempfile.NamedTemporaryFile(dir=".", delete=False) as f:
@@ -2477,12 +2491,12 @@ def daemon(
                 if generate_byfile:
                     generate_byfile_page(cache)
 
-            logging.info(
+            logger.info(
                 f"Took {time.time() - start:.2f} seconds and {_http_request_counter} HTTP requests to check for new/stale "
                 f"issues/PRs{f' and triage {n} of them.' if n else '.'}",
             )
 
-        logging.info("Sleeping for %d minutes", sleep_seconds // 60)
+        logger.info("Sleeping for %d minutes", sleep_seconds // 60)
         time.sleep(sleep_seconds)
 
 
@@ -2538,7 +2552,7 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        format="%(asctime)s %(levelname)s %(message)s",
         level=logging.INFO,
         handlers=[logging.StreamHandler(sys.stdout)],
     )
@@ -2549,7 +2563,7 @@ def main() -> None:
     try:
         slack_hook_url = config.get("default", "slack_hook_url")
     except (configparser.NoSectionError, configparser.NoOptionError) as e:
-        logging.warning(
+        logger.warning(
             "Option 'slack_hook_url' in the configuration file is required to integrate with Slack, "
             "original error: %s",
             e,
@@ -2572,9 +2586,8 @@ def main() -> None:
                         }
                     ),
                 )
-            except Exception as e:
-                logging.error("Could not send the exception information to Slack")
-                logging.exception(e)
+            except Exception:
+                logger.exception("Could not send the exception information to Slack")
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
 
         sys.excepthook = custom_except_hook
@@ -2583,7 +2596,7 @@ def main() -> None:
         gh_token = config.get("default", "gh_token")
         azp_token = config.get("default", "azp_token")
     except (configparser.NoSectionError, configparser.NoOptionError) as e:
-        logging.error(
+        logger.error(
             "Options 'gh_token' and 'azp_token' in the default section of the configuration file are required, "
             "original error: %s",
             e,
@@ -2614,19 +2627,18 @@ def main() -> None:
         except (KeyboardInterrupt, TermInterrupt):
             print("Bye")
             sys.exit(0)
-        except Exception as e:
-            logging.exception(e)
+        except Exception:
+            logger.exception("Unexpected error")
             raise
 
 
 def generate_byfile_page(cache: dict[int, CacheEntry]):
-    logging.info("Generating %s", BYFILE_PAGE_FILENAME)
+    logger.info("Generating %s", BYFILE_PAGE_FILENAME)
     outdated_prs = []
     component_to_numbers = collections.defaultdict(list)
     for number, entry in cache.items():
-        if isinstance(entry, PRCacheEntry):
-            if entry.outdated:
-                outdated_prs.append((number, entry))
+        if isinstance(entry, PRCacheEntry) and entry.outdated:
+            outdated_prs.append((number, entry))
 
         for component in entry.components:
             component_to_numbers[component].append((number, entry))
@@ -2670,7 +2682,7 @@ def generate_byfile_page(cache: dict[int, CacheEntry]):
         os.unlink(f.name)
         raise
 
-    logging.info("%s generated", BYFILE_PAGE_FILENAME)
+    logger.info("%s generated", BYFILE_PAGE_FILENAME)
 
 
 if __name__ == "__main__":
