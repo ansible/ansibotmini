@@ -1334,6 +1334,10 @@ def days_since(when: datetime.datetime) -> int:
     return (datetime.datetime.now(datetime.timezone.utc) - when).days
 
 
+def days_ago(days: int) -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+
+
 def match_components(obj: GH_OBJ, actions: Actions) -> None:
     ctx = TriageContext.get()
     existing_components = []
@@ -2277,10 +2281,9 @@ def ratelimit_to_str(rate_limit: dict[str, t.Any]) -> str:
 
 
 def lock_closed_objects() -> None:
-    date = (
-        datetime.datetime.now(datetime.timezone.utc)
-        - datetime.timedelta(days=LOCK_AFTER_CLOSE_DAYS)
-    ).strftime("%Y-%m-%d")
+    # Use a X-day window to avoid hitting too many already-locked issues from stale search index results.
+    end_date = days_ago(LOCK_AFTER_CLOSE_DAYS).strftime("%Y-%m-%d")
+    start_date = days_ago(LOCK_AFTER_CLOSE_DAYS + 5).strftime("%Y-%m-%d")
     issues_to_query = 50
     query = """
         query($q: String!, $issues_count: Int!) {
@@ -2298,7 +2301,7 @@ def lock_closed_objects() -> None:
             {
                 "query": query,
                 "variables": {
-                    "q": f"repo:ansible/ansible is:closed is:unlocked closed:<{date}",
+                    "q": f"repo:ansible/ansible is:closed is:unlocked closed:{start_date}..{end_date}",
                     "issues_count": issues_to_query,
                 },
             }
