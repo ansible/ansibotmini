@@ -2419,10 +2419,12 @@ def fetch_objects(cache: dict[int, CacheEntry]) -> t.Generator[GH_OBJ]:
                     node["updatedAt"],
                     node["timelineItems"]["updatedAt"],
                 ]
-                if obj_name == "pullRequests":
-                    last_commit = node["commits"]["nodes"][0]["commit"]
-                    if ci_results := last_commit["checkSuites"]["nodes"]:
-                        updated_ats.append(ci_results[0]["updatedAt"])
+                if (
+                    obj_name == "pullRequests"
+                    and (commits := node["commits"]["nodes"])
+                    and (ci_results := commits[0]["commit"]["checkSuites"]["nodes"])
+                ):
+                    updated_ats.append(ci_results[0]["updatedAt"])
                 number = node["number"]
                 updated_at = max(map(datetime.datetime.fromisoformat, updated_ats))
                 open_numbers.append(number)
