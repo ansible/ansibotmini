@@ -1954,7 +1954,7 @@ def first_time_contributor(obj: GH_OBJ, actions: Actions) -> None:
         oldest_pr_number = min(
             node["number"] for node in resp.json()["data"]["search"]["nodes"]
         )
-    except KeyError:
+    except (KeyError, ValueError):
         raise SkipTriage(
             f"Skipping due to incomplete data received when fetching user's PR list, the response was: {resp!r}"
         )
